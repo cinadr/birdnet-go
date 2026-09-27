@@ -664,7 +664,7 @@
       "categorySeason": "Ebben az évszakban új",
       "categorySeasonNamed": "Ebben a(z) {season} évszakban új",
       "categoryInfrequent": "Ritkán észlelt",
-      "maxConfidenceShort": "Max {confidence}%",
+      "maxConfidenceShort": "Max. {confidence}%",
       "detections": "{count, plural, one {# észlelés} other {# észlelés}}",
       "lastSeen": "Utoljára: {days, plural, =0 {ma} one {# napja} other {# napja}}"
     },
