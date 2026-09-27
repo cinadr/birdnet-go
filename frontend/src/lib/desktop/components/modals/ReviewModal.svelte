@@ -8,6 +8,7 @@
   import type { Detection } from '$lib/types/detection.types';
   import { fetchWithCSRF } from '$lib/utils/api';
   import { buildAppUrl } from '$lib/utils/urlHelpers';
+  import { localizeSpeciesName } from '$lib/utils/speciesDisplay';
   import { XCircle, TriangleAlert, ChevronRight } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { safeArrayAccess } from '$lib/utils/security';
@@ -34,6 +35,7 @@
   let lockDetection = $state(false);
   let ignoreSpecies = $state(false);
   let comment = $state('');
+  let originalComment = $state('');
   let isLoading = $state(false);
   let errorMessage = $state<string | null>(null);
   let showCommentSection = $state(false);
@@ -50,6 +52,7 @@
       const firstComment = safeArrayAccess(detection.comments || [], 0);
       const firstCommentValue = firstComment?.entry || '';
       comment = firstCommentValue;
+      originalComment = firstCommentValue;
       // Use firstCommentValue (local variable) instead of comment ($state) to avoid
       // creating a reactive dependency that would reset the section when typing
       showCommentSection = !!firstCommentValue;
@@ -78,7 +81,7 @@
             verified: reviewStatus,
             lock_detection: desiredLockState,
             ignore_species: ignoreSpecies ? detection.commonName : null,
-            comment: comment,
+            comment: comment !== originalComment ? comment : undefined,
           }),
         });
       }
@@ -108,7 +111,9 @@
 
 <Modal
   {isOpen}
-  title={t('common.review.modalTitle', { species: detection?.commonName || '' })}
+  title={t('common.review.modalTitle', {
+    species: localizeSpeciesName(detection?.scientificName, detection?.commonName) || '',
+  })}
   size="7xl"
   showCloseButton={true}
   {onClose}
@@ -141,7 +146,7 @@
                 />
                 <div class="flex-1 min-w-0">
                   <h3 class="text-2xl font-semibold text-[var(--color-base-content)] mb-1 truncate">
-                    {detection.commonName}
+                    {localizeSpeciesName(detection.scientificName, detection.commonName)}
                   </h3>
                   <p class="text-base text-[var(--color-base-content)]/60 italic truncate">
                     {detection.scientificName}
@@ -201,20 +206,23 @@
             </div>
           </div>
 
-          <!-- Audio and Spectrogram -->
-          <div class="relative bg-[var(--color-base-200)] rounded-lg p-4">
-            <AudioPlayer
-              audioUrl={buildAppUrl(`/api/v2/audio/${detection.id}`)}
-              detectionId={detection.id.toString()}
-              showSpectrogram={true}
-              spectrogramSize="lg"
-              spectrogramRaw={false}
-              responsive={true}
-              className="w-full mx-auto"
-              enableClipExtraction={clipExtractionEnabled}
-              clipLabel={`${detection.commonName}_${detection.date}_${detection.time.replace(/:/g, '-')}`}
-            />
-          </div>
+          <!-- Audio and Spectrogram (shown only when this detection has a clip) -->
+          {#if detection.clipName}
+            <div class="relative bg-[var(--color-base-200)] rounded-lg p-4">
+              <AudioPlayer
+                audioUrl={buildAppUrl(`/api/v2/audio/${detection.id}`)}
+                detectionId={detection.id.toString()}
+                showSpectrogram={true}
+                spectrogramSize="lg"
+                spectrogramRaw={false}
+                responsive={true}
+                className="w-full mx-auto"
+                enableClipExtraction={clipExtractionEnabled}
+                clipLabel={`${detection.commonName}_${detection.date}_${detection.time.replace(/:/g, '-')}`}
+                modelType={detection.modelType}
+              />
+            </div>
+          {/if}
         </div>
 
         <!-- Right Column: Review Controls -->
@@ -344,8 +352,7 @@
                   id="comment-textarea"
                   bind:value={comment}
                   class="textarea h-24 w-full"
-                  placeholder={t('common.review.form.commentPlaceholder')}
-                ></textarea>
+                  placeholder={t('common.review.form.commentPlaceholder')}></textarea>
               </div>
             {/if}
           </div>

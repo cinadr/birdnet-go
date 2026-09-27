@@ -7,6 +7,7 @@
 
   import BaseChart from './BaseChart.svelte';
   import { getLocalDateString } from '$lib/utils/date';
+  import { localizeSpeciesName } from '$lib/utils/speciesDisplay';
   import { createTimeScale, createBandScale } from './utils/scales';
   import {
     createAxis,
@@ -17,12 +18,16 @@
   } from './utils/axes';
   import { ChartTooltip } from './utils/interactions';
   import { generateSpeciesColors, type ChartRenderContext } from './utils/theme';
+  import { fitTextNode } from './utils/labels';
 
   export interface NewSpeciesDatum {
     commonName: string;
     scientificName?: string;
     firstHeard: Date;
   }
+
+  // Enriched row: a locale-stable band-scale key plus the visitor-locale label.
+  type LocalizedNewSpeciesDatum = NewSpeciesDatum & { key: string; displayName: string };
 
   interface Props {
     data: NewSpeciesDatum[];
@@ -44,10 +49,28 @@
     ariaLabel,
   }: Props = $props();
 
+  // Visitor-locale display label plus a locale-stable band-scale key. Computed in
+  // a $derived so the repaint $effect (which reads localizedData) re-runs when the
+  // dictionary loads or the UI locale switches. The band scale is keyed on `key`
+  // (scientific name) so a species keeps a stable row/color across locales; only
+  // the axis tick label and the tooltip use `displayName`.
+  const localizedData = $derived(
+    data.map((d): LocalizedNewSpeciesDatum => ({
+      ...d,
+      // Logical OR (not ??) so an empty-string scientific name also falls back to
+      // the common name; an empty key would collapse distinct rows onto one band.
+      key: d.scientificName || d.commonName,
+      displayName: localizeSpeciesName(d.scientificName, d.commonName),
+    }))
+  );
+
   // Styling constants
   const MAX_X_TICKS = 8;
   const TICK_SPACING_PX = 80;
   const X_AXIS_LABEL_OFFSET = 35;
+  // D3's default axisLeft tick gap (tickSizeInner 6 + tickPadding 3): where an end-anchored tick
+  // label's right edge sits, so MARGIN.left minus this is the room a species name actually has.
+  const AXIS_TICK_GAP = 9;
   const BAND_PADDING = 0.3;
   const MARKER_OPACITY = 0.85;
   const MARKER_HOVER_OPACITY = 1;
@@ -69,12 +92,14 @@
 
     chartGroup.selectAll('*').remove();
 
-    if (!data.length || innerWidth <= 0 || innerHeight <= 0) {
+    if (!localizedData.length || innerWidth <= 0 || innerHeight <= 0) {
       return;
     }
 
     // Sort ascending by first-heard date so the earliest species sits at top.
-    const sorted = [...data].sort((a, b) => a.firstHeard.getTime() - b.firstHeard.getTime());
+    const sorted = [...localizedData].sort(
+      (a, b) => a.firstHeard.getTime() - b.firstHeard.getTime()
+    );
 
     // X domain: explicit dateRange, else data extent padded by one day on each
     // side so single-day markers are not clipped at the chart edges.
@@ -97,10 +122,14 @@
       range: [0, innerWidth],
     });
     const yScale = createBandScale({
-      domain: sorted.map(d => d.commonName),
+      domain: sorted.map(d => d.key),
       range: [0, innerHeight],
       padding: BAND_PADDING,
     });
+
+    // Map each stable band key to its visitor-locale label so the axis renders
+    // localized names while the scale stays keyed on the canonical scientific name.
+    const keyToDisplay = new Map(sorted.map(d => [d.key, d.displayName]));
 
     // Daily-granularity markers, so the bucket is never 'day' (clock times).
     const span = xScale.domain();
@@ -116,6 +145,7 @@
     const yAxis = createAxis({
       scale: yScale as unknown as AxisScale<AxisDomain>,
       orientation: 'left',
+      tickFormat: (d: AxisDomain) => keyToDisplay.get(String(d)) ?? String(d),
     });
 
     const xAxisGroup = chartGroup
@@ -127,6 +157,19 @@
 
     styleAxis(xAxisGroup, theme.axis);
     styleAxis(yAxisGroup, theme.axis);
+
+    // Species names are end-anchored at the tick gap and grow left into the margin, so a name wider
+    // than the margin is clipped by the viewport. Fit each to the margin by measured width. Must run
+    // after styleAxis, which applies the font the measurement depends on.
+    yAxisGroup.selectAll<globalThis.SVGTextElement, AxisDomain>('.tick text').each(function (d) {
+      fitTextNode(this, keyToDisplay.get(String(d)) ?? String(d), MARGIN.left - AXIS_TICK_GAP);
+    });
+    // Full name on the tick group (not the <text>, whose textContent must stay the visible label) so
+    // an ellipsized name is still recoverable via hover, touch long-press, and assistive tech.
+    yAxisGroup
+      .selectAll<globalThis.SVGGElement, AxisDomain>('.tick')
+      .append('title')
+      .text(d => keyToDisplay.get(String(d)) ?? String(d));
 
     if (dateAxisLabel) {
       addAxisLabel(
@@ -159,7 +202,7 @@
       .append('rect')
       .attr('class', 'timeline-marker')
       .attr('x', d => xScale(d.firstHeard))
-      .attr('y', d => yScale(d.commonName) ?? 0)
+      .attr('y', d => yScale(d.key) ?? 0)
       .attr('width', dayWidth)
       .attr('height', yScale.bandwidth())
       .attr('rx', 2)
@@ -167,11 +210,11 @@
       .style('opacity', MARKER_OPACITY);
 
     markers
-      .on('mouseenter', function (event: MouseEvent, d: NewSpeciesDatum) {
+      .on('mouseenter', function (event: MouseEvent, d: LocalizedNewSpeciesDatum) {
         select(this).transition().duration(TRANSITION_MS).style('opacity', MARKER_HOVER_OPACITY);
         markers.filter(other => other !== d).style('opacity', MARKER_DIM_OPACITY);
         tooltip?.show({
-          title: d.commonName,
+          title: d.displayName,
           items: [{ label: firstHeardLabel, value: getLocalDateString(d.firstHeard) }],
           x: event.clientX,
           y: event.clientY,
@@ -186,9 +229,11 @@
       });
   }
 
-  // Repaint when any drawChart input changes (data or label/locale).
+  // Repaint when any drawChart input changes (data, locale-localized labels, or
+  // axis labels). Reading localizedData (rather than data) ties the repaint to the
+  // dictionary store, so a pure UI-locale switch re-renders the localized labels.
   $effect(() => {
-    void data;
+    void localizedData;
     void dateRange;
     void dateAxisLabel;
     void firstHeardLabel;

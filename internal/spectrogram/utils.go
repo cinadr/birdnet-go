@@ -97,11 +97,21 @@ func GetValidSizes() []string {
 func BuildSpectrogramPath(clipPath string) (string, error) {
 	ext := filepath.Ext(clipPath)
 	if ext == "" {
+		// Only the basename goes into the context. Callers pass a path joined
+		// against the export directory, and this error is reported to Sentry,
+		// where the directory prefix would leak the account name and directory
+		// layout of the reporting machine. The diagnostic here is which file
+		// lacks an extension, which the basename answers on its own.
+		//
+		// Keyed clip_basename rather than clip_name because clip_name is already
+		// taken: elsewhere it carries the DB column value, which keeps its
+		// year/month directories. Reusing it for a bare filename would make one
+		// key mean two shapes.
 		return "", errors.Newf("clip path has no extension").
 			Component("spectrogram").
 			Category(errors.CategoryValidation).
 			Context("operation", "build_spectrogram_path").
-			Context("clip_path", clipPath).
+			Context("clip_basename", filepath.Base(clipPath)).
 			Build()
 	}
 
@@ -114,9 +124,11 @@ func BuildSpectrogramPath(clipPath string) (string, error) {
 // and process kills (e.g. context-triggered SIGKILL/SIGTERM).
 //
 // The function checks for operational errors in this order:
-// 1. Context errors (Canceled, DeadlineExceeded)
-// 2. Process exit codes (SIGKILL=137, SIGTERM=143) - more reliable than string matching
-// 3. String matching for "signal: killed" - fallback for compatibility
+//  1. Context errors (Canceled, DeadlineExceeded)
+//  2. An operational classification already attached upstream: a CategorySystem
+//     EnhancedError tagged PriorityLow (set by the generator via isOperationalExecError)
+//  3. Process exit codes (SIGKILL=137, SIGTERM=143) - more reliable than string matching
+//  4. String matching for "signal: killed" - fallback for compatibility
 func IsOperationalError(err error) bool {
 	if err == nil {
 		return false
@@ -127,9 +139,22 @@ func IsOperationalError(err error) bool {
 		return true
 	}
 
+	// Honor an operational classification already attached upstream. The generator
+	// tags context-driven interruptions as a CategorySystem error with PriorityLow
+	// using the governing context (see isOperationalExecError); that is the only
+	// reliable signal on Windows, where a context-killed process exits with status 1
+	// and never matches the signal-based checks below. Requiring CategorySystem (the
+	// category the generator pairs with these interruptions) keeps an unrelated
+	// PriorityLow error from being misread as operational. Downstream consumers
+	// (prerenderer, API media handlers) then get a consistent answer without
+	// re-deriving it from a platform-dependent surface error.
+	if enhanced, ok := errors.AsType[*errors.EnhancedError](err); ok && enhanced.GetPriority() == errors.PriorityLow &&
+		enhanced.Category == errors.CategorySystem {
+		return true
+	}
+
 	// Check for process termination via exit codes (more reliable than string matching)
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 		code := exitErr.ExitCode()
 		if code == exitCodeSIGKILL || code == exitCodeSIGTERM {
 			return true
@@ -138,6 +163,30 @@ func IsOperationalError(err error) bool {
 
 	// Fallback to string matching for compatibility with other error types
 	return strings.Contains(err.Error(), signalKilledMessage)
+}
+
+// isOperationalExecError reports whether a failed external-process execution should
+// be treated as an expected operational event (context cancellation or deadline)
+// rather than a genuine failure. It checks the governing context first because the
+// surface error from an exec that was canceled, timed out, or skipped due to an
+// already-done context is platform-dependent and not always recognizable by
+// IsOperationalError:
+//
+//   - On Windows a context-killed process exits with status 1 (TerminateProcess),
+//     which has no Unix signal semantics, so it never matches the SIGKILL/SIGTERM
+//     exit codes or the "signal: killed" string that IsOperationalError looks for.
+//   - On Windows, Cmd.Start resolves the executable before it observes context
+//     cancellation, so an already-canceled context combined with a missing binary
+//     surfaces as "executable file not found" instead of context.Canceled.
+//
+// ctx.Err() is the reliable, platform-independent signal: if the context that
+// governed the exec is done, the failure is attributable to cancellation/timeout
+// regardless of how the OS reported it.
+func isOperationalExecError(ctx context.Context, err error) bool {
+	if ctx != nil && ctx.Err() != nil {
+		return true
+	}
+	return IsOperationalError(err)
 }
 
 // BuildSpectrogramPathWithParams builds a spectrogram path with size/raw encoded in filename.
@@ -162,8 +211,11 @@ func BuildSpectrogramPathWithParams(audioPath string, width int, raw bool) (stri
 		return "", errors.Newf("audio path has no extension").
 			Component("spectrogram").
 			Category(errors.CategoryValidation).
+			// Basename only, for the reason spelled out on the sibling above:
+			// this error is reported to Sentry and the directory prefix leaks
+			// the account name and layout of the reporting machine.
 			Context("operation", "build_spectrogram_path_with_params").
-			Context("audio_path", audioPath).
+			Context("clip_basename", filepath.Base(audioPath)).
 			Build()
 	}
 	baseName := strings.TrimSuffix(audioPath, ext)

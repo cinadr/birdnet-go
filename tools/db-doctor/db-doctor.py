@@ -26,8 +26,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-SCRIPT_VERSION = "1.1.0"
-SCHEMA_VERSION = "v2-2026-05-21"
+SCRIPT_VERSION = "1.2.1"
+SCHEMA_VERSION = "v2-2026-06-14"
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -125,8 +125,9 @@ V2_EXPECTED_COLUMNS: dict[str, list[str]] = {
     "hourly_weathers": [
         "id", "daily_events_id", "time", "temperature", "feels_like",
         "temp_min", "temp_max", "pressure", "humidity", "visibility",
-        "wind_speed", "wind_deg", "wind_gust", "clouds", "weather_main",
-        "weather_desc", "weather_icon", "created_at",
+        "wind_speed", "wind_deg", "wind_gust", "clouds", "precipitation",
+        "precipitation_type", "weather_main", "weather_desc", "weather_icon",
+        "created_at",
     ],
     "app_metadata": ["key", "value"],
 }
@@ -533,6 +534,8 @@ V2_COLUMN_DEFS: dict[str, dict[str, str]] = {
         "wind_deg": "INTEGER NOT NULL DEFAULT 0",
         "wind_gust": "REAL NOT NULL DEFAULT 0",
         "clouds": "INTEGER NOT NULL DEFAULT 0",
+        "precipitation": "REAL NOT NULL DEFAULT 0",
+        "precipitation_type": "TEXT NOT NULL DEFAULT ''",
         "weather_main": "TEXT NOT NULL DEFAULT ''",
         "weather_desc": "TEXT NOT NULL DEFAULT ''",
         "weather_icon": "TEXT NOT NULL DEFAULT ''",
@@ -1140,25 +1143,43 @@ class DatabaseDoctor:
             )
 
         if state == "completed":
-            if "detections" in tables:
-                det_count = self._table_row_count(conn, "detections")
-                if det_count is not None:
-                    details.append(f"Detections: {det_count:,}")
-
+            # GitHub #3575: a completed marker with the detections data table
+            # missing entirely means the app trusts the marker and wedges in
+            # enhanced mode against a non-existent table. Treat a missing table
+            # like an empty one and flag it for repair (the fix resets state to
+            # idle). A fresh install always has the detections table (created by
+            # AutoMigrate), so a healthy empty-but-present table is NOT flagged.
+            if "detections" not in tables:
+                details.append("Detections table is missing entirely")
                 if "notes" in tables:
                     note_count = self._table_row_count(conn, "notes")
                     if note_count is not None:
-                        details.append(f"Legacy notes still present: {note_count:,}")
-                        if note_count > 0 and (det_count is not None and det_count == 0):
-                            details.append(
-                                "WARNING: detections empty but notes has data"
-                            )
-                            return CheckResult(
-                                name="Migration state", status="warn",
-                                message="Migration marked complete but "
-                                        "detections table is empty",
-                                details=details, fixable=True,
-                            )
+                        details.append(f"Legacy notes present: {note_count:,}")
+                return CheckResult(
+                    name="Migration state", status="warn",
+                    message="Migration marked complete but the detections "
+                            "table is missing",
+                    details=details, fixable=True,
+                )
+
+            det_count = self._table_row_count(conn, "detections")
+            if det_count is not None:
+                details.append(f"Detections: {det_count:,}")
+
+            if "notes" in tables:
+                note_count = self._table_row_count(conn, "notes")
+                if note_count is not None:
+                    details.append(f"Legacy notes still present: {note_count:,}")
+                    if note_count > 0 and (det_count is not None and det_count == 0):
+                        details.append(
+                            "WARNING: detections empty but notes has data"
+                        )
+                        return CheckResult(
+                            name="Migration state", status="warn",
+                            message="Migration marked complete but "
+                                    "detections table is empty",
+                            details=details, fixable=True,
+                        )
 
             if "migration_dirty_ids" in tables:
                 dirty = self._table_row_count(conn, "migration_dirty_ids")

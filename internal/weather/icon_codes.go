@@ -211,6 +211,22 @@ var OpenWeatherToIcon = map[string]IconCode{
 	"50n": IconFog,
 }
 
+// PirateWeatherToIcon maps Pirate Weather (Dark Sky-compatible) icon codes to
+// standardized icon codes. "wind" has no standardized equivalent and is
+// intentionally omitted, falling back to IconUnknown via GetStandardIconCode.
+var PirateWeatherToIcon = map[string]IconCode{
+	"clear-day":           IconClearSky,
+	"clear-night":         IconClearSky,
+	"partly-cloudy-day":   IconPartlyCloudy,
+	"partly-cloudy-night": IconPartlyCloudy,
+	"cloudy":              IconCloudy,
+	"fog":                 IconFog,
+	"rain":                IconRain,
+	"snow":                IconSnow,
+	"sleet":               IconSleet,
+	"thunderstorm":        IconThunderstorm,
+}
+
 // IconDescription maps standardized icon codes to human-readable descriptions
 var IconDescription = map[IconCode]string{
 	IconClearSky:     "Clear Sky",
@@ -226,15 +242,21 @@ var IconDescription = map[IconCode]string{
 	IconUnknown:      "Unknown", // Added description for unknown
 }
 
-// GetStandardIconCode converts provider-specific weather codes to our standard icon codes
+// GetStandardIconCode converts provider-specific weather codes to our standard icon codes.
+// Wunderground is intentionally absent: it has no provider symbol table and derives its
+// icon from measurements via InferWundergroundIcon, so it never calls this function.
 func GetStandardIconCode(code, provider string) IconCode {
 	switch provider {
-	case "yrno":
+	case yrNoProviderName:
 		if iconCode, ok := YrNoSymbolToIcon[code]; ok {
 			return iconCode
 		}
-	case "openweather":
+	case openWeatherProviderName:
 		if iconCode, ok := OpenWeatherToIcon[code]; ok {
+			return iconCode
+		}
+	case pirateWeatherProviderName:
+		if iconCode, ok := PirateWeatherToIcon[code]; ok {
 			return iconCode
 		}
 	}
@@ -243,4 +265,53 @@ func GetStandardIconCode(code, provider string) IconCode {
 		logger.String("provider", provider),
 		logger.String("code", code))
 	return IconUnknown
+}
+
+// weatherMainFromIconCode derives a high-level condition category (the
+// "weather_main" field) from a standardized icon code, using OpenWeather's
+// weather[0].main vocabulary so the value is consistent across providers. yr.no
+// and Wunderground have no native "main" field, so they derive it from the icon
+// they already compute; OpenWeather uses its native weather[0].main instead.
+// Sleet maps to "Snow" to match how OpenWeather groups sleet (the finer
+// rain/snow/sleet distinction is preserved in precipitation_type). Returns ""
+// for IconUnknown so the API's omitempty hides an absent value.
+func weatherMainFromIconCode(code IconCode) string {
+	switch code {
+	case IconClearSky, IconFair:
+		return "Clear"
+	case IconPartlyCloudy, IconCloudy:
+		return "Clouds"
+	case IconRainShowers, IconRain:
+		return "Rain"
+	case IconThunderstorm:
+		return "Thunderstorm"
+	case IconSleet, IconSnow:
+		return "Snow"
+	case IconFog:
+		return "Fog"
+	case IconUnknown:
+		return ""
+	default:
+		return ""
+	}
+}
+
+// precipTypeFromIconCode derives the precipitation type ("rain", "snow",
+// "sleet") from a standardized icon code, for providers that report a
+// precipitation amount but no explicit type. Returns "" for codes that do not
+// imply precipitation; callers should only use the result when the measured
+// precipitation amount is greater than zero.
+func precipTypeFromIconCode(code IconCode) string {
+	switch code {
+	case IconSnow:
+		return "snow"
+	case IconSleet:
+		return "sleet"
+	case IconRain, IconRainShowers, IconThunderstorm:
+		return "rain"
+	case IconClearSky, IconFair, IconPartlyCloudy, IconCloudy, IconFog, IconUnknown:
+		return ""
+	default:
+		return ""
+	}
 }

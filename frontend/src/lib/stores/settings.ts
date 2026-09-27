@@ -39,11 +39,16 @@
  * - Automatic persistence to server
  * - Error handling and user feedback
  */
+import type {
+  ExportFormat,
+  LosslessExportFormat,
+} from '$lib/desktop/features/settings/pages/audioExportFormat';
 import { t } from '$lib/i18n';
 import { getLogger } from '$lib/utils/logger';
 import { safeGet, safeSpread } from '$lib/utils/security';
 import { settingsAPI } from '$lib/utils/settingsApi.js';
 import { coerceSettings } from '$lib/utils/settingsCoercion';
+import { DEFAULT_REGION_MODE } from '$lib/utils/variantSelection';
 import { weatherDefaults } from '$lib/utils/weatherDefaults';
 import { derived, get, writable } from 'svelte/store';
 import { toastActions } from './toast.js';
@@ -74,7 +79,18 @@ export interface BirdNetSettings {
   latitude: number;
   longitude: number;
   locationConfigured: boolean; // true when location has been explicitly configured
+  /**
+   * Regional model preference for the gallery: 'auto' (resolve the best regional
+   * variant from the station location), 'global' (always the worldwide model), or
+   * a region slug. '' and absent both mean 'auto' (the Go field is omitempty).
+   */
+  modelRegion?: string;
   rangeFilter: RangeFilterSettings;
+  // Host used for model downloads, e.g. https://hf-mirror.com where
+  // huggingface.co is unreachable. When empty the backend falls back to the
+  // HF_ENDPOINT environment variable first and only then to https://huggingface.co,
+  // so an empty value here does not necessarily mean the default host is in use.
+  huggingFaceEndpoint?: string;
 }
 
 export interface DynamicThresholdSettings {
@@ -122,6 +138,26 @@ export interface BatSettings {
   ultrasonicFilter?: {
     enabled: boolean;
   };
+}
+
+// Secondary acoustic classifiers (Perch v2, BirdNET v3.0). Their detections
+// follow the primary BirdNET threshold unless overrideThreshold is enabled, in
+// which case `threshold` gates them instead. modelPath/labelPath/locale are
+// managed by the model gallery, not the detection-settings form.
+export interface PerchSettings {
+  modelPath?: string | null;
+  labelPath?: string | null;
+  overrideThreshold: boolean;
+  threshold: number;
+  locale?: string;
+}
+
+export interface BirdNetV3Settings {
+  modelPath?: string | null;
+  labelPath?: string | null;
+  overrideThreshold: boolean;
+  threshold: number;
+  locale?: string;
 }
 
 export interface SQLiteSettings {
@@ -172,6 +208,12 @@ export interface SoundLevelSettings {
   interval: number;
 }
 
+// Audio gain bounds in dB, shared by the sound card, stream, and export gain
+// controls. Mirrors the backend MinAudioGain/MaxAudioGain validation range so
+// the frontend clamp and sliders stay in sync if the range ever changes.
+export const AUDIO_GAIN_MIN_DB = -40;
+export const AUDIO_GAIN_MAX_DB = 40;
+
 // Stream type constants
 export const StreamTypes = {
   RTSP: 'rtsp',
@@ -184,6 +226,8 @@ export const StreamTypes = {
 export type StreamType = (typeof StreamTypes)[keyof typeof StreamTypes];
 
 export type ChannelMode = 'downmix' | 'left' | 'right';
+
+export type MediaMode = 'auto' | 'audio-only' | 'full-stream';
 
 // QuietHoursConfig represents quiet hours configuration for a stream or sound card
 export interface QuietHoursConfig {
@@ -217,9 +261,11 @@ export interface StreamConfig {
   type: StreamType; // Stream type: rtsp, http, hls, rtmp, udp
   transport?: 'tcp' | 'udp'; // Transport protocol (for RTSP/RTMP only)
   channelMode?: ChannelMode; // Channel selection mode: downmix, left, or right
+  mediaMode?: MediaMode; // RTSP media request: auto, audio-only, or full-stream (empty = full-stream)
   models?: string[]; // Model IDs for this stream (e.g., ["birdnet", "perch_v2"])
   equalizer?: EqualizerSettings; // Per-stream EQ (undefined = use global)
   quietHours?: QuietHoursConfig; // Quiet hours configuration
+  gain?: number; // Input gain in dB (0 = no adjustment)
 }
 
 // ChannelEnergy represents the energy level of a single audio channel
@@ -274,7 +320,8 @@ export interface EqualizerFilter {
 }
 
 export interface ExportSettings {
-  type: 'wav' | 'mp3' | 'flac' | 'aac' | 'opus';
+  type: ExportFormat;
+  ultrasonicType: LosslessExportFormat; // bat/ultrasonic captures above 48 kHz; WAV or FLAC only
   bitrate: string;
   enabled: boolean;
   debug?: boolean;
@@ -312,6 +359,16 @@ export interface PrivacyFilterSettings {
   enabled: boolean;
   confidence: number;
   debug: boolean;
+  // Dedicated Silero VAD speech gate. Backend-managed (toggled via config/API,
+  // modelPath set by the model gallery install); no dedicated UI yet. Declared
+  // here so a settings save round-trip preserves it rather than stripping it.
+  vad?: PrivacyFilterVadSettings;
+}
+
+export interface PrivacyFilterVadSettings {
+  enabled: boolean;
+  threshold: number;
+  modelPath: string;
 }
 
 export interface PrivacyFilter {
@@ -379,7 +436,7 @@ export interface MQTTSettings {
   retain?: boolean;
   tls: {
     enabled: boolean;
-    skipVerify: boolean;
+    insecureSkipVerify: boolean;
   };
   homeAssistant?: HomeAssistantSettings;
 }
@@ -407,12 +464,18 @@ export interface WundergroundSettings {
   units: 'm' | 'e' | 'h'; // m=metric, e=imperial/english, h=UK hybrid
 }
 
+export interface PirateWeatherSettings {
+  apiKey: string;
+  endpoint: string;
+}
+
 export interface WeatherSettings {
-  provider: 'none' | 'yrno' | 'openweather' | 'wunderground';
+  provider: 'none' | 'yrno' | 'openweather' | 'wunderground' | 'pirateweather';
   pollInterval: number;
   debug: boolean;
   openWeather: OpenWeatherSettings;
   wunderground: WundergroundSettings;
+  pirateWeather: PirateWeatherSettings;
 }
 
 // New array-based OAuth provider configuration
@@ -505,6 +568,12 @@ export interface SeasonalTrackingSettings {
   seasons: Record<string, Season>; // Season definitions (e.g., spring, summer, fall, winter)
 }
 
+// Infrequent tracking settings
+export interface InfrequentTrackingSettings {
+  enabled: boolean;
+  absenceDays: number; // Days since last detection before a return is flagged "infrequent"
+}
+
 // Species tracking settings
 export interface SpeciesTrackingSettings {
   enabled: boolean;
@@ -513,6 +582,7 @@ export interface SpeciesTrackingSettings {
   notificationSuppressionHours: number; // Hours to suppress duplicate notifications
   yearlyTracking: YearlyTrackingSettings;
   seasonalTracking: SeasonalTrackingSettings;
+  infrequentTracking: InfrequentTrackingSettings;
 }
 
 // Extended capture settings
@@ -810,6 +880,8 @@ export interface SettingsFormData {
   main: MainSettings;
   birdnet: BirdNetSettings;
   bat?: BatSettings;
+  perch?: PerchSettings;
+  birdnetv3?: BirdNetV3Settings;
   input?: unknown; // Not exposed via JSON
   realtime?: RealtimeSettings;
   webServer?: WebServerSettings;
@@ -829,7 +901,6 @@ export interface GlobalSettingsState {
   isSaving: boolean;
   activeSection: string;
   error: string | null;
-  restartRequired: boolean;
   dataLoaded: boolean;
 }
 
@@ -864,12 +935,14 @@ function createEmptySettings(): SettingsFormData {
       latitude: 0,
       longitude: 0,
       locationConfigured: false,
+      modelRegion: DEFAULT_REGION_MODE,
       rangeFilter: {
         threshold: 0.03,
         passUnmappedSpecies: false,
         speciesCount: null,
         species: [],
       },
+      huggingFaceEndpoint: '',
     },
     bat: {
       enabled: false,
@@ -879,6 +952,14 @@ function createEmptySettings(): SettingsFormData {
       ultrasonicFilter: {
         enabled: true,
       },
+    },
+    perch: {
+      overrideThreshold: false,
+      threshold: 0.5,
+    },
+    birdnetv3: {
+      overrideThreshold: false,
+      threshold: 0.5,
     },
     realtime: {
       interval: 15,
@@ -901,6 +982,7 @@ function createEmptySettings(): SettingsFormData {
         streamTransport: 'auto',
         export: {
           type: 'wav',
+          ultrasonicType: 'flac',
           bitrate: '96k',
           enabled: false,
           debug: false,
@@ -933,8 +1015,13 @@ function createEmptySettings(): SettingsFormData {
       },
       privacyFilter: {
         enabled: false,
-        confidence: 0.5,
+        confidence: 0.05,
         debug: false,
+        vad: {
+          enabled: false,
+          threshold: 0.35,
+          modelPath: '',
+        },
       },
       dogBarkFilter: {
         enabled: false,
@@ -972,7 +1059,7 @@ function createEmptySettings(): SettingsFormData {
         retain: false,
         tls: {
           enabled: false,
-          skipVerify: false,
+          insecureSkipVerify: false,
         },
         homeAssistant: {
           enabled: false,
@@ -1083,7 +1170,6 @@ const initialState: GlobalSettingsState = {
   isSaving: false,
   activeSection: 'main',
   error: null,
-  restartRequired: false,
   dataLoaded: false,
 };
 
@@ -1112,6 +1198,10 @@ export const mainSettings = derived(settingsStore, $store => $store.formData.mai
 export const birdnetSettings = derived(settingsStore, $store => $store.formData.birdnet);
 
 export const batSettings = derived(settingsStore, $store => $store.formData.bat);
+
+export const perchSettings = derived(settingsStore, $store => $store.formData.perch);
+
+export const birdNetV3Settings = derived(settingsStore, $store => $store.formData.birdnetv3);
 
 export const realtimeSettings = derived(settingsStore, $store => $store.formData.realtime);
 
@@ -1271,6 +1361,36 @@ export const settingsActions = {
     });
   },
 
+  /**
+   * Sync the TLS mode after a certificate operation (upload, generate, delete)
+   * that the backend has ALREADY persisted to disk. Only tlsMode and autoTls are
+   * updated, and they are updated in BOTH formData and originalData so the change
+   * does not register as an unsaved edit. Crucially, every other field in the
+   * security section is left untouched, so unsaved edits the user made elsewhere
+   * in the Security form (for example a typed-but-unsaved Basic Auth password)
+   * are preserved. This replaces a full loadSettings() reload, which overwrote
+   * the entire store and discarded those unsaved edits.
+   */
+  syncTLSMode(mode: string) {
+    settingsStore.update(state => {
+      const autoTls = mode === 'autotls';
+      // Fall back to the store's own defaults (not a bare {}) if a security
+      // section is somehow absent, so required fields are never stripped. In
+      // practice this never fires: the cert handlers that call this only run
+      // after settings have loaded, so security is always populated.
+      const sync = (security?: SecuritySettings): SecuritySettings => ({
+        ...(security ?? createEmptySettings().security ?? ({} as SecuritySettings)),
+        tlsMode: mode,
+        autoTls,
+      });
+      return {
+        ...state,
+        formData: { ...state.formData, security: sync(state.formData.security) },
+        originalData: { ...state.originalData, security: sync(state.originalData.security) },
+      };
+    });
+  },
+
   updateTaxonomySynonyms(synonyms: Record<string, string>) {
     settingsStore.update(state => ({
       ...state,
@@ -1324,7 +1444,7 @@ export const settingsActions = {
       // session. Read newLocale from coercedFormData (the value we actually
       // persisted) and compare to originalData (the snapshot loaded from
       // the backend). This avoids clobbering a locale chosen via the sidebar
-      // LanguageSelector — which updates localStorage but not the backend —
+      // LanguageSelector (which updates localStorage but not the backend)
       // with whatever stale value the backend still holds, and matches the
       // coercedFormData-based comparison used by the TLS check below.
       const newLocale = coercedFormData.realtime?.dashboard?.locale;
@@ -1337,24 +1457,14 @@ export const settingsActions = {
         }
       }
 
-      // Check if TLS/security settings changed that require a restart
-      const tlsFields: (keyof SecuritySettings)[] = ['tlsMode', 'tlsPort', 'redirectToHttps'];
-      const origSec = currentState.originalData.security;
-      const newSec = coercedFormData.security;
-      const tlsChanged =
-        origSec &&
-        newSec &&
-        tlsFields.some(
-          // eslint-disable-next-line security/detect-object-injection -- key from controlled array
-          f => origSec[f] !== newSec[f]
-        );
-
-      // Update originalData to match the saved formData (no reload needed)
+      // Update originalData to match the saved formData (no reload needed).
+      // Restart-required state is owned by the backend (refreshed via
+      // fetchRestartStatus above) and surfaced by the global RestartBanner, so
+      // it is no longer tracked client-side here.
       settingsStore.update(state => ({
         ...state,
         originalData: JSON.parse(JSON.stringify(state.formData)),
         isSaving: false,
-        restartRequired: state.restartRequired || Boolean(tlsChanged),
       }));
 
       // Show success toast

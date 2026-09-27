@@ -8,7 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/goleak"
+
+	"github.com/tphakala/birdnet-go/internal/testutil"
 )
 
 func TestNewMemoryStore(t *testing.T) {
@@ -201,7 +202,7 @@ func TestMemoryStore_Subscribe_SlowConsumerDrops(t *testing.T) {
 		ch, cancel := store.Subscribe()
 		t.Cleanup(cancel)
 
-		// Don't read from channel — simulate slow consumer
+		// Don't read from channel: simulate slow consumer
 		// Record 3 batches; channel cap is 1, so at most 1 is buffered
 		store.RecordBatch(map[string]float64{"cpu": 1.0})
 		store.RecordBatch(map[string]float64{"cpu": 2.0})
@@ -220,8 +221,9 @@ func TestMemoryStore_Subscribe_SlowConsumerDrops(t *testing.T) {
 }
 
 func TestMemoryStore_ConcurrentAccess(t *testing.T) {
-	t.Parallel()
-	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	// Not parallel: a per-test leak check sees every goroutine in the process,
+	// so it cannot share the run with concurrently executing tests.
+	testutil.VerifyNoLeaks(t)
 	store := NewMemoryStore(100)
 
 	var wg sync.WaitGroup
@@ -263,6 +265,84 @@ func TestMemoryStore_ConcurrentAccess(t *testing.T) {
 
 	// Should have data after all goroutines complete
 	assert.NotEmpty(t, store.Names())
+}
+
+func TestMemoryStore_TopologyBroadcast(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		store := NewMemoryStore(10)
+		ch, cancel := store.SubscribeTopology()
+		t.Cleanup(cancel)
+
+		// Broadcast; the subscriber should receive within a short deadline.
+		store.BroadcastTopologyChanged()
+
+		select {
+		case <-ch:
+			// Expected: signal received.
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for topology signal")
+		}
+	})
+}
+
+func TestMemoryStore_TopologyBroadcast_Cancel(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		store := NewMemoryStore(10)
+		ch, cancel := store.SubscribeTopology()
+
+		// Cancel the subscription, then broadcast: no panic, no receive.
+		cancel()
+		store.BroadcastTopologyChanged()
+
+		select {
+		case <-ch:
+			t.Fatal("cancelled subscriber should not receive a topology signal")
+		case <-time.After(100 * time.Millisecond):
+			// Expected: no signal received.
+		}
+	})
+}
+
+func TestMemoryStore_TopologyBroadcast_Coalesces(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		store := NewMemoryStore(10)
+		ch, cancel := store.SubscribeTopology()
+		t.Cleanup(cancel)
+
+		// Three broadcasts without a consumer; cap is 1, so they coalesce.
+		store.BroadcastTopologyChanged()
+		store.BroadcastTopologyChanged()
+		store.BroadcastTopologyChanged()
+
+		// First receive succeeds.
+		select {
+		case <-ch:
+		case <-time.After(time.Second):
+			t.Fatal("expected at least one coalesced topology signal")
+		}
+
+		// No second buffered signal remains.
+		select {
+		case <-ch:
+			t.Fatal("topology signals should coalesce to a single pending value")
+		case <-time.After(100 * time.Millisecond):
+			// Expected: nothing more buffered.
+		}
+	})
+}
+
+func TestMemoryStore_TopologyBroadcast_NoSubscribers(t *testing.T) {
+	t.Parallel()
+	store := NewMemoryStore(10)
+
+	// Broadcasting with no subscribers must not panic.
+	assert.NotPanics(t, store.BroadcastTopologyChanged)
 }
 
 func TestRingBuffer_EmptyRead(t *testing.T) {

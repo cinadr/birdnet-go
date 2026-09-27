@@ -2,7 +2,6 @@ package processor
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -13,6 +12,7 @@ import (
 	"github.com/tphakala/birdnet-go/internal/analysis/jobqueue"
 	"github.com/tphakala/birdnet-go/internal/conf"
 	"github.com/tphakala/birdnet-go/internal/detection"
+	"github.com/tphakala/birdnet-go/internal/errors"
 	"github.com/tphakala/birdnet-go/internal/privacy"
 )
 
@@ -41,31 +41,31 @@ func TestPrivacyWrapError(t *testing.T) {
 		},
 		{
 			name:          "simple error",
-			err:           errors.New("simple error message"),
+			err:           errors.NewStd("simple error message"),
 			shouldContain: []string{"simple error message"},
 		},
 		{
 			name:             "RTSP URL with credentials",
-			err:              errors.New("failed to connect to rtsp://admin:password123@192.168.1.100:554/stream"),
+			err:              errors.NewStd("failed to connect to rtsp://admin:password123@192.168.1.100:554/stream"),
 			shouldContain:    []string{"failed to connect to"},
 			shouldNotContain: []string{"admin", "password123"},
 		},
 		{
 			name: "API key in error",
 			// NOTE: This is a fake API key used only for testing the sanitization function.
-			err:              errors.New("API request failed: api_key=abc123xyz789"),
+			err:              errors.NewStd("API request failed: api_key=abc123xyz789"),
 			shouldContain:    []string{"API request failed"},
 			shouldNotContain: []string{"abc123xyz789"},
 		},
 		{
 			name:             "Token in error",
-			err:              errors.New("authentication failed: token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"),
+			err:              errors.NewStd("authentication failed: token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"),
 			shouldContain:    []string{"authentication failed", "[TOKEN]"},
 			shouldNotContain: []string{"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"},
 		},
 		{
 			name:             "Email in error",
-			err:              errors.New("notification failed for user@example.com"),
+			err:              errors.NewStd("notification failed for user@example.com"),
 			shouldContain:    []string{"notification failed for", "[EMAIL]"},
 			shouldNotContain: []string{"user@example.com"},
 		},
@@ -102,7 +102,7 @@ func TestPrivacyWrapError(t *testing.T) {
 func TestPrivacyWrapErrorWrapped(t *testing.T) {
 	t.Parallel()
 	// Create a wrapped error with sensitive information
-	baseErr := errors.New("user@example.com")
+	baseErr := errors.NewStd("user@example.com")
 	wrappedErr := fmt.Errorf("operation failed for: %w", baseErr)
 
 	// Sanitize the wrapped error
@@ -672,6 +672,14 @@ func TestEnqueueMultipleTasks(t *testing.T) {
 
 // TestIntegrationWithJobQueue tests the integration between Processor.EnqueueTask and a real job queue
 func TestIntegrationWithJobQueue(t *testing.T) {
+	// Bounds for the polling assertions below: wait up to eventuallyTimeout,
+	// re-checking every eventuallyPollInterval, for the worker goroutine to
+	// reach the expected state.
+	const (
+		eventuallyTimeout      = 2 * time.Second
+		eventuallyPollInterval = 10 * time.Millisecond
+	)
+
 	// Remove t.Parallel() to avoid race conditions with testRetryConfigOverride
 	// Set up the test retry config override to ensure consistent behavior
 	testRetryConfigOverride = nil
@@ -695,8 +703,10 @@ func TestIntegrationWithJobQueue(t *testing.T) {
 		},
 	}
 
-	// Create a channel to track action execution
-	executionChan := make(chan struct{})
+	// Create a channel to track action execution. Buffered so the worker
+	// goroutine never blocks on the send if the test has already moved on
+	// (e.g. after a timeout), which would otherwise leak the goroutine.
+	executionChan := make(chan struct{}, 1)
 
 	// Create a mock action that signals when executed
 	mockAction := &MockAction{
@@ -740,17 +750,15 @@ func TestIntegrationWithJobQueue(t *testing.T) {
 		require.Fail(t, "Timeout waiting for action to be executed")
 	}
 
-	// Verify that the action was executed exactly once
-	assert.Equal(t, 1, mockAction.ExecuteCount, "Expected action to be executed once")
+	// Verify that the action was executed exactly once. Read the count
+	// through the lock-protected getter to avoid racing the worker goroutine.
+	assert.Equal(t, 1, mockAction.GetExecuteCount(), "Expected action to be executed once")
 
-	// Wait a bit for the job queue to update its statistics
-	waitCtx, waitCancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-	defer waitCancel()
-	<-waitCtx.Done()
-
-	// Verify that the job queue statistics reflect the completed job
-	stats := realQueue.GetStats()
-	assert.Equal(t, 1, stats.SuccessfulJobs, "Expected 1 successful job")
+	// Poll the job queue statistics until the completed job is recorded
+	// instead of racing a fixed timeout.
+	require.Eventually(t, func() bool {
+		return realQueue.GetStats().SuccessfulJobs == 1
+	}, eventuallyTimeout, eventuallyPollInterval, "Expected 1 successful job")
 
 	// Test with a failing action
 	failingAction := &MockAction{
@@ -782,17 +790,18 @@ func TestIntegrationWithJobQueue(t *testing.T) {
 	err = processor.EnqueueTask(failingTask)
 	require.NoError(t, err, "Failed to enqueue failing task")
 
-	// Wait for the job queue to process the failing job
-	processCtx, processCancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
-	defer processCancel()
-	<-processCtx.Done()
+	// The failing action signals no completion channel, so poll the
+	// lock-protected execution count instead of racing a fixed timeout
+	// (reading the field directly here is a data race with the worker).
+	require.Eventually(t, func() bool {
+		return failingAction.GetExecuteCount() == 1
+	}, eventuallyTimeout, eventuallyPollInterval, "Expected failing action to be executed once")
 
-	// Verify that the failing action was executed
-	assert.Equal(t, 1, failingAction.ExecuteCount, "Expected failing action to be executed once")
-
-	// Verify that the job queue statistics reflect the failed job
-	stats = realQueue.GetStats()
-	assert.GreaterOrEqual(t, stats.FailedJobs, 1, "Expected at least 1 failed job")
+	// Poll until the job queue records the failed job.
+	require.Eventually(t, func() bool {
+		return realQueue.GetStats().FailedJobs >= 1
+	}, eventuallyTimeout, eventuallyPollInterval, "Expected at least 1 failed job")
+	stats := realQueue.GetStats()
 
 	// Log final statistics
 	t.Logf("Job queue stats: Total=%d, Successful=%d, Failed=%d",

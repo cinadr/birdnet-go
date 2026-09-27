@@ -101,48 +101,6 @@ func (s TestStage) String() string {
 	}
 }
 
-// isIPAddress checks if the given host is an IP address
-func isIPAddress(host string) bool {
-	// Remove protocol prefix if present
-	if strings.Contains(host, "://") {
-		parts := strings.Split(host, "://")
-		if len(parts) != 2 {
-			return false
-		}
-		// Only allow mqtt and tcp protocols
-		if parts[0] != "mqtt" && parts[0] != "tcp" {
-			return false
-		}
-		host = parts[1]
-	}
-
-	// Handle IPv6 addresses with brackets
-	if strings.HasPrefix(host, "[") {
-		// Extract the IPv6 address from within brackets
-		end := strings.LastIndex(host, "]")
-		if end == -1 {
-			return false // Malformed IPv6 address with opening bracket but no closing bracket
-		}
-		// Extract the address without brackets
-		host = host[1:end]
-	} else if strings.Contains(host, ":") {
-		// If it contains a colon but no brackets, it could be either:
-		// 1. An IPv4 address with port (e.g. "192.168.1.1:1883")
-		// 2. A raw IPv6 address (e.g. "::1" or "2001:db8::1")
-
-		// If it has more than 2 colons, assume it's IPv6
-		if strings.Count(host, ":") <= 1 {
-			// Likely IPv4 with port, remove the port
-			host = strings.Split(host, ":")[0]
-		}
-		// Otherwise leave it as is for IPv6 parsing
-	}
-
-	// Try to parse as IP address
-	ip := net.ParseIP(host)
-	return ip != nil
-}
-
 // Timeout constants for various test stages
 const (
 	dnsTimeout  = 5 * time.Second
@@ -216,8 +174,7 @@ func runNetworkTest(ctx context.Context, stage TestStage, test networkTest) Test
 // categorizeError determines the error category based on error type and content
 func categorizeError(err error) string {
 	// Check if it's already an enhanced error
-	var enhancedErr *errors.EnhancedError
-	if errors.As(err, &enhancedErr) {
+	if enhancedErr, ok := errors.AsType[*errors.EnhancedError](err); ok {
 		return enhancedErr.GetCategory()
 	}
 
@@ -259,13 +216,12 @@ func (c *client) testDNSStage(ctx context.Context, brokerHost string) TestResult
 	})
 }
 
-// testTCPStage performs TCP connection testing
-func (c *client) testTCPStage(ctx context.Context) TestResult {
+// testTCPStage performs TCP connection testing against the given host:port.
+func (c *client) testTCPStage(ctx context.Context, hostPort string) TestResult {
 	tcpCtx, tcpCancel := context.WithTimeout(ctx, tcpTimeout)
 	defer tcpCancel()
 
 	return runNetworkTest(tcpCtx, TCPConnection, func(ctx context.Context) error {
-		hostPort := extractHostPort(c.config.Broker)
 		if c.config.TLS.Enabled {
 			return c.testTLSConnection(ctx, hostPort)
 		}
@@ -389,8 +345,7 @@ func (c *client) testPublishStage(ctx context.Context) TestResult {
 		err = c.Publish(ctx, testTopic, string(noteJson))
 		if err != nil {
 			// Add test-specific context to publish errors
-			var enhancedErr *errors.EnhancedError
-			if errors.As(err, &enhancedErr) {
+			if enhancedErr, ok := errors.AsType[*errors.EnhancedError](err); ok {
 				// Add test context to existing enhanced error
 				enhancedErr.Context["test_topic"] = testTopic
 				enhancedErr.Context["test_payload_size"] = len(noteJson)
@@ -428,8 +383,17 @@ func (c *client) TestConnection(ctx context.Context, resultChan chan<- TestResul
 		return
 	}
 
-	brokerHost := extractHost(c.config.Broker)
-	c.runTestStages(ctx, brokerHost, sendResult)
+	// Parse the broker address once and thread the components through the
+	// stages, so every stage interprets the broker identically.
+	broker, err := parseBroker(c.config.Broker)
+	if err != nil {
+		sendResult(TestResult{
+			Success: false, Stage: "Test Setup", Message: "Invalid broker address",
+			Error: err.Error(), State: stateFailed,
+		})
+		return
+	}
+	c.runTestStages(ctx, broker, sendResult)
 }
 
 // createResultSender creates a function that sends test results with proper state management
@@ -502,7 +466,7 @@ func logTestResult(result *TestResult) {
 }
 
 // runTestStages executes the test stages in sequence
-func (c *client) runTestStages(ctx context.Context, brokerHost string, sendResult func(TestResult)) {
+func (c *client) runTestStages(ctx context.Context, broker brokerParts, sendResult func(TestResult)) {
 	runStage := func(stage TestStage, test func() TestResult) bool {
 		sendResult(TestResult{
 			Success: true,
@@ -514,15 +478,15 @@ func (c *client) runTestStages(ctx context.Context, brokerHost string, sendResul
 		return result.Success
 	}
 
-	// Stage 1: DNS Resolution (skip if IP address)
-	if !isIPAddress(brokerHost) {
-		if !runStage(DNSResolution, func() TestResult { return c.testDNSStage(ctx, brokerHost) }) {
+	// Stage 1: DNS Resolution (skip when the host is already an IP literal)
+	if net.ParseIP(broker.host) == nil {
+		if !runStage(DNSResolution, func() TestResult { return c.testDNSStage(ctx, broker.host) }) {
 			return
 		}
 	}
 
 	// Stage 2: TCP Connection
-	if !runStage(TCPConnection, func() TestResult { return c.testTCPStage(ctx) }) {
+	if !runStage(TCPConnection, func() TestResult { return c.testTCPStage(ctx, broker.hostPort()) }) {
 		return
 	}
 
@@ -537,8 +501,9 @@ func (c *client) runTestStages(ctx context.Context, brokerHost string, sendResul
 
 // constructTestTopic creates a proper test topic path handling edge cases
 func constructTestTopic(baseTopic string) string {
-	// Remove trailing slashes
-	baseTopic = strings.TrimRight(baseTopic, "/")
+	// Remove trailing slashes so a trailing-slash base does not yield an empty
+	// topic level ("birdnet//test").
+	baseTopic = trimBaseTopic(baseTopic)
 
 	// If base topic is empty, use a default
 	if baseTopic == "" {
@@ -546,73 +511,4 @@ func constructTestTopic(baseTopic string) string {
 	}
 
 	return baseTopic + "/test"
-}
-
-// extractHost extracts the hostname from broker URL
-func extractHost(broker string) string {
-	// Remove protocol prefix if present
-	if strings.Contains(broker, "://") {
-		parts := strings.Split(broker, "://")
-		if len(parts) != 2 {
-			return broker
-		}
-		broker = parts[1]
-	}
-
-	// Handle IPv6 addresses with brackets
-	if strings.HasPrefix(broker, "[") {
-		end := strings.LastIndex(broker, "]")
-		if end == -1 {
-			return broker // Malformed IPv6 address
-		}
-		return broker[1:end] // Return without brackets
-	}
-
-	// For IPv4 or hostname, remove port if present
-	if strings.Count(broker, ":") <= 1 {
-		if i := strings.LastIndex(broker, ":"); i != -1 {
-			return broker[:i]
-		}
-	}
-	// For IPv6 without brackets or no port, return as is
-	return broker
-}
-
-// extractHostPort extracts host:port from broker URL
-func extractHostPort(broker string) string {
-	// Remove protocol prefix if present
-	if strings.Contains(broker, "://") {
-		parts := strings.Split(broker, "://")
-		if len(parts) != 2 {
-			return broker
-		}
-		broker = parts[1]
-	}
-
-	// Handle IPv6 addresses
-	if strings.HasPrefix(broker, "[") {
-		// IPv6 with port
-		if i := strings.LastIndex(broker, "]:"); i != -1 {
-			return broker
-		}
-		// IPv6 without port
-		if strings.HasSuffix(broker, "]") {
-			return broker[:len(broker)-1] + "]:1883"
-		}
-		// Malformed IPv6
-		return broker
-	}
-
-	// Check if this might be a raw IPv6 address
-	if strings.Count(broker, ":") > 1 {
-		// Add brackets and port
-		return "[" + broker + "]:1883"
-	}
-
-	// IPv4 or hostname
-	if !strings.Contains(broker, ":") {
-		return broker + ":1883"
-	}
-
-	return broker
 }

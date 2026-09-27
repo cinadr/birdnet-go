@@ -11,8 +11,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tphakala/birdnet-go/internal/diagnostics"
 	"github.com/tphakala/birdnet-go/internal/errors"
 	"github.com/tphakala/birdnet-go/internal/events"
+	"github.com/tphakala/birdnet-go/internal/inference"
 	"github.com/tphakala/birdnet-go/internal/logger"
 )
 
@@ -122,6 +124,23 @@ func (a *App) Shutdown(ctx context.Context) error {
 			allErrs = append(allErrs, errors.New(err).Component(componentApp).Category(errors.CategorySystem).Context("operation", "service_stop").Context("service", svc.Name()).Build())
 		}
 	}
+
+	// Tier 2: process-global inference runtimes (ORT / OpenVINO cores). Free them
+	// only on a CLEAN shutdown: if any service above timed out, a native thread
+	// may still be inside an inference call, and tearing the shared runtime out
+	// from under it would segfault. Both calls are no-ops if never initialized.
+	if len(allErrs) == 0 {
+		if err := inference.DestroyONNXRuntime(); err != nil {
+			allErrs = append(allErrs, errors.New(err).Component(componentApp).Category(errors.CategorySystem).Context("operation", "destroy_onnxruntime").Build())
+		}
+		if err := inference.DestroyOpenVINO(); err != nil {
+			allErrs = append(allErrs, errors.New(err).Component(componentApp).Category(errors.CategorySystem).Context("operation", "destroy_openvino").Build())
+		}
+	}
+
+	// Journal shutdown (best-effort). Clean means every service stopped
+	// within budget and the inference runtimes were released.
+	diagnostics.RecordShutdown(diagnostics.Default(), len(allErrs) == 0)
 
 	return errors.Join(allErrs...)
 }

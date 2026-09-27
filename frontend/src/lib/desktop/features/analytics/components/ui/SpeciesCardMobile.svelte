@@ -3,6 +3,8 @@
   import { t } from '$lib/i18n';
   import { formatDate } from '$lib/utils/formatters';
   import { ChevronRight } from '@lucide/svelte';
+  import { localizeSpeciesName } from '$lib/utils/speciesDisplay';
+  import { handleBirdImageError } from '$lib/desktop/components/ui/image-utils';
 
   interface SpeciesData {
     common_name: string;
@@ -28,11 +30,7 @@
     return (value * 100).toFixed(1) + '%';
   }
 
-  let imageLoadFailed = $state(false);
-
-  function handleImageError() {
-    imageLoadFailed = true;
-  }
+  let displayName = $derived(localizeSpeciesName(species.scientific_name, species.common_name));
 
   function handleClick() {
     if (onClick) {
@@ -52,18 +50,18 @@
   >
     <figure class="px-4 pt-4">
       <div class="rounded-xl w-full aspect-[4/3] overflow-hidden bg-[var(--color-base-300)]">
-        {#if species.thumbnail_url && !imageLoadFailed}
+        {#if species.thumbnail_url}
           <img
             src={species.thumbnail_url}
-            alt={species.common_name}
+            alt={displayName}
             class="h-full w-full object-cover"
-            onerror={handleImageError}
+            onerror={handleBirdImageError}
           />
         {/if}
       </div>
     </figure>
     <div class="card-body p-4">
-      <h3 class="card-title text-base">{species.common_name}</h3>
+      <h3 class="card-title text-base">{displayName}</h3>
       <p class="text-sm text-[var(--color-base-content)] opacity-60 italic">
         {species.scientific_name}
       </p>
@@ -106,16 +104,16 @@
           {#if species.thumbnail_url}
             <img
               src={species.thumbnail_url}
-              alt={species.common_name}
+              alt={displayName}
               class="object-cover"
-              onerror={handleImageError}
+              onerror={handleBirdImageError}
             />
           {/if}
         </div>
       </div>
     </div>
     <div class="flex-1 min-w-0">
-      <h3 class="font-bold text-sm truncate">{species.common_name}</h3>
+      <h3 class="font-bold text-sm truncate">{displayName}</h3>
       <p class="text-xs text-[var(--color-base-content)] opacity-60 italic truncate">
         {species.scientific_name}
       </p>
@@ -153,15 +151,15 @@
         {#if species.thumbnail_url}
           <img
             src={species.thumbnail_url}
-            alt={species.common_name}
+            alt={displayName}
             class="object-cover"
-            onerror={handleImageError}
+            onerror={handleBirdImageError}
           />
         {/if}
       </div>
     </div>
     <div class="flex-1 min-w-0">
-      <h4 class="font-bold text-sm truncate">{species.common_name}</h4>
+      <h4 class="font-bold text-sm truncate">{displayName}</h4>
       <p class="text-xs text-[var(--color-base-content)] opacity-60 truncate">
         {species.scientific_name}
       </p>

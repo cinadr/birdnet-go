@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	apiv2 "github.com/tphakala/birdnet-go/internal/api/v2"
+	importsapi "github.com/tphakala/birdnet-go/internal/api/v2/imports"
 	"github.com/tphakala/birdnet-go/internal/classifier"
 	"github.com/tphakala/birdnet-go/internal/conf"
 	"github.com/tphakala/birdnet-go/internal/datastore"
@@ -17,6 +17,7 @@ import (
 	"github.com/tphakala/birdnet-go/internal/detection"
 	"github.com/tphakala/birdnet-go/internal/errors"
 	"github.com/tphakala/birdnet-go/internal/logger"
+	"github.com/tphakala/birdnet-go/internal/suncalc"
 )
 
 // migrationSetupConfig holds configuration for migration infrastructure setup.
@@ -85,7 +86,7 @@ func setupMigrationWorker(cfg *migrationSetupConfig) error {
 	// Create repositories for auxiliary data migration
 	weatherRepo := repository.NewWeatherRepository(v2DB, nil, cfg.useV2Prefix, isMySQL)
 	imageCacheRepo := repository.NewImageCacheRepository(v2DB, nil, labelRepo, cfg.useV2Prefix, isMySQL)
-	thresholdRepo := repository.NewDynamicThresholdRepository(v2DB, nil, labelRepo, cfg.useV2Prefix, isMySQL)
+	thresholdRepo := repository.NewDynamicThresholdRepository(v2DB, nil, cfg.useV2Prefix, isMySQL)
 	notificationRepo := repository.NewNotificationHistoryRepository(v2DB, nil, labelRepo, cfg.useV2Prefix, isMySQL)
 
 	// Create the legacy detection repository
@@ -167,8 +168,8 @@ func setupMigrationWorker(cfg *migrationSetupConfig) error {
 	}
 
 	// Inject dependencies into the API layer
-	apiv2.SetMigrationDependencies(stateManager, worker)
-	apiv2.SetMigrationTelemetry(migrationTelemetry)
+	importsapi.SetMigrationDependencies(stateManager, worker)
+	importsapi.SetMigrationTelemetry(migrationTelemetry)
 
 	// Check for state recovery - resume migration if it was in progress
 	state, err := stateManager.GetState()
@@ -195,7 +196,7 @@ func setupMigrationWorker(cfg *migrationSetupConfig) error {
 			// Create cancellable context for the worker - this allows graceful shutdown
 			// to stop the worker by cancelling this context
 			workerCtx, workerCancel := context.WithCancel(context.Background())
-			apiv2.SetMigrationWorkerCancel(workerCancel)
+			importsapi.SetMigrationWorkerCancel(workerCancel)
 			if startErr := worker.Start(workerCtx); startErr != nil {
 				workerCancel() // Clean up on failure
 				migrationLogger.Warn("failed to resume migration worker",
@@ -255,7 +256,7 @@ func initializeMigrationInfrastructure(settings *conf.Settings, ds datastore.Int
 	v2Path := datastoreV2.V2MigrationPathFromConfigured(settings.Output.SQLite.Path)
 	if err := initializeV2WithSelfHealing(v2Manager, v2Path, log); err != nil {
 		if errors.Is(err, datastoreV2.ErrV2SchemaCorrupted) {
-			// Self-healing failed or was not safe — close and return.
+			// Self-healing failed or was not safe: close and return.
 			if closeErr := v2Manager.Close(); closeErr != nil {
 				log.Warn("failed to close v2 manager after self-healing failure",
 					logger.Error(closeErr),
@@ -267,7 +268,7 @@ func initializeMigrationInfrastructure(settings *conf.Settings, ds datastore.Int
 				Context("operation", "initialize_v2_database").
 				Build()
 		}
-		// Non-corruption error — close and return.
+		// Non-corruption error: close and return.
 		if closeErr := v2Manager.Close(); closeErr != nil {
 			log.Warn("failed to close v2 manager after initialization failure",
 				logger.Error(closeErr),
@@ -500,7 +501,7 @@ func initializeV2OnlyMode(settings *conf.Settings) (*v2only.Datastore, error) {
 	sourceRepo := repository.NewAudioSourceRepository(v2DB, nil, useV2Prefix, isMySQL)
 	weatherRepo := repository.NewWeatherRepository(v2DB, nil, useV2Prefix, isMySQL)
 	imageCacheRepo := repository.NewImageCacheRepository(v2DB, nil, labelRepo, useV2Prefix, isMySQL)
-	thresholdRepo := repository.NewDynamicThresholdRepository(v2DB, nil, labelRepo, useV2Prefix, isMySQL)
+	thresholdRepo := repository.NewDynamicThresholdRepository(v2DB, nil, useV2Prefix, isMySQL)
 	notificationRepo := repository.NewNotificationHistoryRepository(v2DB, nil, labelRepo, useV2Prefix, isMySQL)
 	appEventRepo := repository.NewAppEventRepository(v2DB, nil, useV2Prefix, isMySQL)
 
@@ -525,8 +526,11 @@ func initializeV2OnlyMode(settings *conf.Settings) (*v2only.Datastore, error) {
 		AppEvent:       appEventRepo,
 		Logger:         log,
 		Timezone:       time.Local,
-		Labels:         settings.BirdNET.Labels, // For GetThresholdEvents workaround (#1907)
+		Labels:         settings.BirdNET.Labels, // For common<->scientific name-map resolution
 		SpeciesCodeMap: scientificIndex,
+		// Sun calculator for civil dawn (dawn-chorus onset) and time-of-day classification,
+		// matching the legacy datastore.New wiring. It follows the live station location.
+		SunCalc: suncalc.NewSunCalcWithSource(conf.LiveLocation(settings)),
 	})
 	if err != nil {
 		_ = v2Manager.Close()

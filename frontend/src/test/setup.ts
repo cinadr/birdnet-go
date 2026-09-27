@@ -119,6 +119,11 @@ vi.mock('$lib/stores/toast', () => ({
 
 // Mock internationalization - map common keys to actual text for tests
 const translations: Record<string, string> = {
+  // Stream test error keys (used by api.test.ts error handling)
+  'errors.streams.test.connectionFailed':
+    'Could not connect to the stream. Check that the URL is correct and the stream is accessible',
+  'errors.streams.test.noAudioTrack':
+    'The stream has no audio track. Only streams that contain audio can be used',
   // SelectDropdown and SpeciesInput form components
   'common.ui.search': 'Search...',
   'components.forms.select.searchOptions': 'Search options',
@@ -131,6 +136,27 @@ const translations: Record<string, string> = {
   'settings.species.customConfiguration.title': 'Custom Configuration',
   'settings.species.customConfiguration.description': 'Configure custom settings for species',
   'common.ui.loading': 'Loading...',
+  'settings.main.sections.rangeFilter.stationLocation.useCurrentLocation': 'Use browser location',
+  'settings.main.sections.rangeFilter.stationLocation.automaticLocation': 'Automatic location',
+  'settings.main.sections.rangeFilter.stationLocation.locationHelp':
+    "Fills the coordinates using this browser's location.",
+  'settings.main.sections.rangeFilter.stationLocation.locating': 'Locating...',
+  'settings.main.sections.rangeFilter.stationLocation.accuracy':
+    'Estimated accuracy: within {accuracy} m',
+  'settings.main.sections.rangeFilter.stationLocation.locationDetected':
+    'Browser location detected.',
+  'settings.main.sections.rangeFilter.stationLocation.geolocationUnsupported':
+    'Device location is unsupported.',
+  'settings.main.sections.rangeFilter.stationLocation.geolocationRequiresHttps':
+    'Browser location requires HTTPS or localhost.',
+  'settings.main.sections.rangeFilter.stationLocation.geolocationDenied':
+    'Location permission was denied.',
+  'settings.main.sections.rangeFilter.stationLocation.geolocationUnavailable':
+    'The device could not determine its location.',
+  'settings.main.sections.rangeFilter.stationLocation.geolocationTimedOut':
+    'The location request timed out.',
+  'settings.main.sections.rangeFilter.stationLocation.geolocationFailed':
+    'Could not determine the device location.',
   'common.close': 'Close',
   'common.confirm': 'Confirm',
   'common.cancel': 'Cancel',
@@ -336,7 +362,7 @@ vi.mock('$lib/utils/settingsApi.js', () => {
         topic: 'birdnet',
         tls: {
           enabled: false,
-          skipVerify: false,
+          insecureSkipVerify: false,
         },
       },
       observability: {
@@ -728,7 +754,10 @@ Object.defineProperty(window, 'location', {
 });
 
 // Mock security utilities - consolidated mock for consistent test behavior
-vi.mock('$lib/utils/security', () => ({
+// Real exports pass through (isPlainObject, maskUrlCredentials, ...); only the
+// functions below are overridden.
+vi.mock('$lib/utils/security', async importOriginal => ({
+  ...(await importOriginal<typeof import('$lib/utils/security')>()),
   safeGet: vi.fn(
     (
       obj: Record<string, unknown> | null | undefined,
@@ -919,8 +948,8 @@ vi.mock('$lib/utils/security', () => ({
 
 // Global test utilities
 export const testUtils = {
-  // Helper to reset all mocked functions
-  resetAllMocks: () => {
+  // Clears call history only (vi.clearAllMocks); mock implementations are kept
+  clearAllMocks: () => {
     vi.clearAllMocks();
   },
 

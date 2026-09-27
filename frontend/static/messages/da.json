@@ -109,6 +109,14 @@
       "closeModal": "Luk dialogboks",
       "dismissAlert": "Afvis advarsel",
       "closeNotification": "Luk notifikation",
+      "toastRegion": {
+        "topLeft": "Notifikationer, øverst til venstre",
+        "topCenter": "Notifikationer, øverst i midten",
+        "topRight": "Notifikationer, øverst til højre",
+        "bottomLeft": "Notifikationer, nederst til venstre",
+        "bottomCenter": "Notifikationer, nederst i midten",
+        "bottomRight": "Notifikationer, nederst til højre"
+      },
       "toggleDropdown": "Skift rullemenu",
       "sortAscending": "Sortér stigende",
       "selectLanguage": "Vælg sprog",
@@ -130,10 +138,10 @@
       "selectToday": "Vælg i dag",
       "dateSelected": "Dato valgt: {date}",
       "calendarNavigation": "Brug piletaster til at navigere i kalenderen, Enter for at vælge, Escape for at lukke",
-      "downloadCsv": "Download artsliste som CSV",
       "visitEbirdLink": "Åbn eBird.org i en ny fane",
       "learnEbirdTaxonomyLink": "Åbn eBird Taxonomy i en ny fane",
-      "resizeHandle": "Træk for at ændre størrelse"
+      "resizeHandle": "Træk for at ændre størrelse",
+      "imageCredit": "Billedkreditering: {name}"
     },
     "labels": {
       "confidence": "Sikkerhed",
@@ -204,12 +212,20 @@
     "serverError": "500 - Intern serverfejl",
     "componentError": "Komponentindlæsningsfejl",
     "speciesAnalytics": "Artsanalyse",
-    "advancedAnalytics": "Avanceret analyse",
     "detectionDetails": "Detektionsdetaljer",
-    "settingsNotAvailable": "Indstillinger ikke tilgængelige"
+    "settingsNotAvailable": "Indstillinger ikke tilgængelige",
+    "analyticsSummary": "Analyse - Oversigt",
+    "analyticsActivity": "Analyse - Aktivitetsmønstre",
+    "analyticsTrends": "Analyse - Tendenser",
+    "analyticsBiodiversity": "Analyse - Biodiversitet",
+    "analyticsReview": "Analyse - Gennemgang & Nøjagtighed",
+    "analyticsNocturnal": "Analyse - Nataktivitet",
+    "analyticsWeather": "Analyse - Vejrkorrelation",
+    "analyticsSoundscape": "Analyse - Lydlandskab"
   },
   "navigation": {
     "dashboard": "Instrumentpanel",
+    "liveAudio": "Direktelyd",
     "settingsMenu": "Indstillingsmenu",
     "theme": "Tema",
     "github": "GitHub",
@@ -237,7 +253,13 @@
     "reportBugAriaLabel": "Rapportér en fejl på GitHub (åbner i nyt vindue)",
     "askQuestionAriaLabel": "Stil et spørgsmål på GitHub Discussions (åbner i nyt vindue)",
     "viewOnGithubAriaLabel": "Se BirdNET-Go på GitHub (åbner i nyt vindue)",
-    "health": "Health"
+    "health": "Helbred",
+    "sections": {
+      "explore": "Udforsk",
+      "patterns": "Mønstre",
+      "environment": "Miljø",
+      "dataQuality": "Datakvalitet"
+    }
   },
   "about": {
     "title": "BirdNET-Go",
@@ -397,6 +419,7 @@
         "updatingIntervals": "Opdaterer detektionsintervaller...",
         "reconfiguringMqtt": "Opdaterer MQTT-forbindelse...",
         "reconfiguringBirdweather": "Opdaterer BirdWeather-integration...",
+        "reconfiguringEbird": "Updating eBird integration...",
         "reconfiguringStreams": "Opdaterer lydstreams...",
         "reconfiguringTelemetry": "Opdaterer telemetriindstillinger...",
         "reconfiguringPushNotifications": "Omkonfigurerer push-notifikationsudbydere...",
@@ -404,6 +427,9 @@
         "recalculatingThresholds": "Genberegner dynamiske tærskler for ny basisværdi",
         "reconfiguringDynamicThresholds": "Genkonfigurerer dynamiske tærskler...",
         "webserverRestartRequired": "Webserverindstillinger ændret. Genstart påkrævet.",
+        "oauthRestartRequired": "Godkendelsesudbyderindstillinger ændret. Genstart påkrævet.",
+        "databaseRestartRequired": "Databaseindstillinger ændret. Genstart påkrævet.",
+        "loggingRestartRequired": "Logningsindstillinger ændret. Genstart påkrævet.",
         "reconfiguringSoundLevel": "Opdaterer lydniveauovervågning...",
         "reconfiguringAudioSources": "Genkonfigurerer lydkilder...",
         "rebuildingExtendedCapture": "Genopbygger udvidet optagelsesfilter...",
@@ -433,11 +459,37 @@
       },
       "buffer": {
         "overloadTitle": "Lydanalyse overbelastet",
-        "overloadMessage": "Dit system dropper {dropRate}% af lydprøverne for kilden ''{sourceName}'', fordi det ikke kan følge med analysen. Reducer BirdNET-overlapværdien i detektionsindstillingerne eller overvej at opgradere til en hurtigere CPU."
+        "overloadMessage": "Dit system dropper {dropRate}% af lydprøverne for kilden '{sourceName}', fordi det ikke kan følge med analysen. Reducer BirdNET-overlapværdien i detektionsindstillingerne eller overvej at opgradere til en hurtigere CPU."
       },
       "ort": {
         "unavailableTitle": "ONNX Runtime ikke tilgængelig",
         "unavailableMessage": "ONNX Runtime {requiredVersion} er påkrævet til {modelName}, men blev ikke fundet. Se installationsguiden: {installGuideURL}"
+      },
+      "region": {
+        "staleTitle": "Modelregionen kan være forældet",
+        "staleMessage": "{modelName} er installeret for {oldRegion}, men din nye placering svarer til {newRegion}. Du kan skifte varianter fra modelgalleriet i Indstillinger.",
+        "staleGlobalMessage": "{modelName} er installeret for {oldRegion}, men din nye placering er uden for dens dækning. Du kan skifte til den globale variant fra modelgalleriet i Indstillinger."
+      },
+      "modelPath": {
+        "reconciledTitle": "Modelfilstier repareret for {modelName}",
+        "reconciledMessage": "De konfigurerede filstier for {modelName} var forældede og er blevet repareret, så de matcher den installerede model på {modelPath}.",
+        "substitutedTitle": "Den konfigurerede modelfil for {modelName} blev ikke fundet",
+        "substitutedMessage": "Modelfilen, der er konfigureret til {modelName}, blev ikke fundet på disken, så den installerede model på {modelPath} bruges i stedet. Din konfiguration blev ikke ændret.",
+        "unreadableTitle": "Den konfigurerede modelfil for {modelName} kunne ikke læses",
+        "unreadableMessage": "Modelfilen, der er konfigureret til {modelName}, findes, men kunne ikke læses, så den installerede model på {modelPath} bruges i stedet. Din konfiguration blev ikke ændret. Kontrollér filens tilladelser, og at dens lager er monteret.",
+        "builtinMessage": "Modelfilen, der er konfigureret til {modelName}, blev ikke fundet på disken, og der er ingen installeret model tilgængelig til at erstatte den, så den indbyggede model bruges i stedet. Din konfiguration blev ikke ændret.",
+        "notRegisteredTitle": "Ingen model analyserer {sourceName}",
+        "notRegisteredMessage": "Ingen lyd når {models} på lydkilden \"{sourceName}\", så der produceres ingen detektioner. Åbn System > AI-modeller for at tjekke dens status for hver kilde, og bekræft, at lydkilden er forbundet og sender lyd."
+      },
+      "acousticModels": {
+        "noneTitle": "Ingen akustisk model aktiveret",
+        "noneMessage": "Ingen akustisk model er indlæst, så lyd optages, men analyseres ikke. Aktiver en model i Indstillinger > Analyse, eller installer en fra modelgalleriet.",
+        "loadFailedTitle": "Akustisk model kunne ikke indlæses",
+        "loadFailedMessage": "En aktiveret akustisk model kunne ikke indlæses, så lyd optages, men analyseres ikke. Tjek modellen på siden System > AI-modeller."
+      },
+      "modelOptimize": {
+        "title": "{count, plural, one {# model har en bedre version til dette system} other {# modeller har bedre versioner til dette system}}",
+        "message": "En version, der passer bedre til systemets hardware eller placering, er tilgængelig for: {models}. Åbn Indstillinger > Analyse > Modeller, og vælg Optimer for at skifte."
       },
       "alert": {
         "firedTitle": "{rule_name}",
@@ -446,18 +498,23 @@
         "errorOccurred": "{error}",
         "disconnected": "{source_name} afbrudt",
         "error": {
-          "authError": "Godkendelse fejlede — kontrollér din API-nøgle eller legitimationsoplysninger",
-          "rateLimited": "Hastighedsbegrænset — forespørgsler sænkes automatisk",
+          "authError": "Godkendelse fejlede - kontrollér din API-nøgle eller legitimationsoplysninger",
+          "rateLimited": "Hastighedsbegrænset - forespørgsler sænkes automatisk",
           "gatewayTimeout": "Tjenesten oplever muligvis stor belastning",
           "serverError": "Tjenesten er midlertidigt utilgængelig",
-          "connectionRefused": "Tjenesten er utilgængelig — kontrollér adressen og at den kører",
-          "dnsError": "Kunne ikke opløse værtsnavn — kontrollér adressen",
-          "tlsError": "TLS/certifikatfejl — kontrollér dine sikkerhedsindstillinger",
-          "timeout": "Forbindelsen fik timeout — tjenesten kan være langsom eller utilgængelig",
-          "connectionInterrupted": "Forbindelsen blev afbrudt — prøver igen automatisk",
-          "diskFull": "Disk er fuld — frigør noget plads",
-          "permissionDenied": "Adgang nægtet — kontrollér fil- eller tjenestetilladelser"
+          "connectionRefused": "Tjenesten er utilgængelig - kontrollér adressen og at den kører",
+          "dnsError": "Kunne ikke opløse værtsnavn - kontrollér adressen",
+          "tlsError": "TLS/certifikatfejl - kontrollér dine sikkerhedsindstillinger",
+          "timeout": "Forbindelsen fik timeout - tjenesten kan være langsom eller utilgængelig",
+          "connectionInterrupted": "Forbindelsen blev afbrudt - prøver igen automatisk",
+          "diskFull": "Disk er fuld - frigør noget plads",
+          "permissionDenied": "Adgang nægtet - kontrollér fil- eller tjenestetilladelser"
         }
+      },
+      "inferenceFailing": {
+        "title": "{modelName} fejler ved hver analyse",
+        "message": "{modelName} er indlæst, men de seneste {failures} analyser i træk fejlede på {runtime}: inferensen returnerede en fejl. Lyd optages, men denne model registrerer intet. Tjek modellen på siden System > AI-modeller.",
+        "nonFiniteMessage": "{modelName} er indlæst, men de seneste {failures} analyser i træk fejlede på {runtime}: modellen returnerede ugyldige scorer (NaN eller uendelige). Lyd optages, men denne model registrerer intet. Tjek modellen på siden System > AI-modeller."
       }
     },
     "loading": "Indlæser notifikationer..."
@@ -486,7 +543,8 @@
       "confidenceMax": "Maksimum sikkerhedsprocent",
       "verifiedStatus": "Bekræftelsesstatus",
       "lockedStatus": "Låsestatus",
-      "timeOfDay": "Tidspunkt på dagen"
+      "timeOfDay": "Tidspunkt på dagen",
+      "source": "Lydkilde"
     },
     "advancedFilters": "Avancerede filtre",
     "showAdvancedFilters": "Vis avancerede filtre",
@@ -508,6 +566,9 @@
       "sunrise": "Solopgang +/- 30 min",
       "sunset": "Solnedgang +/- 30 min"
     },
+    "sourceOptions": {
+      "any": "Alle kilder"
+    },
     "sortOptions": {
       "dateDesc": "Dato (nyeste først)",
       "dateAsc": "Dato (ældste først)",
@@ -519,6 +580,7 @@
       "timeOfDay": "Tidspunkt på dagen",
       "species": "Art",
       "confidence": "Sikkerhed",
+      "source": "Kilde",
       "status": "Status",
       "actions": "Handlinger"
     },
@@ -589,7 +651,7 @@
     "currentlyHearing": {
       "title": "Hører lige nu",
       "subtitle": "Arter der identificeres i realtid",
-      "empty": "Alt er stille — ingen fugle registreret lige nu"
+      "empty": "Alt er stille - ingen fugle registreret lige nu"
     },
     "rejected": "Afvist",
     "newSpeciesHighlights": {
@@ -600,6 +662,7 @@
       "categoryYear": "Ny i år",
       "categorySeason": "Ny denne sæson",
       "categorySeasonNamed": "Ny denne {season}",
+      "categoryInfrequent": "Sjældent set",
       "maxConfidenceShort": "Maks {confidence} %",
       "detections": "{count, plural, one {# registrering} other {# registreringer}}",
       "lastSeen": "Senest: {days, plural, =0 {i dag} one {for # dag siden} other {for # dage siden}}"
@@ -634,7 +697,8 @@
         "viewSixHourly": "Vis alle registreringer for {startHour}:00-{endHour}:00",
         "hourlyDetections": "{count} registreringer kl. {hour}:00 - Klik for at se",
         "biHourlyDetections": "{count} registreringer fra {startHour}:00-{endHour}:00 - Klik for at se",
-        "sixHourlyDetections": "{count} registreringer fra {startHour}:00-{endHour}:00 - Klik for at se"
+        "sixHourlyDetections": "{count} registreringer fra {startHour}:00-{endHour}:00 - Klik for at se",
+        "infrequent": "Sjældent set - vendte tilbage efter {days, plural, one {# dags} other {# dages}} fravær"
       },
       "loading": {
         "preparing": "Forbereder data...",
@@ -707,6 +771,16 @@
       "recentDetectionsFetch": "Kunne ikke hente seneste registreringer: {status}",
       "recentDetectionsLoad": "Kunne ikke indlæse seneste registreringer",
       "configFetch": "Kunne ikke hente instrumentpanelkonfiguration: {status}"
+    },
+    "acousticModels": {
+      "noneTitle": "Ingen akustisk model aktiveret",
+      "noneMessage": "Lyd optages, men analyseres ikke. Aktivér en model i modelgalleriet for at begynde at detektere arter.",
+      "noneAction": "Åbn modelgalleri",
+      "loadFailedTitle": "Akustisk model kunne ikke indlæses",
+      "loadFailedMessage": "En aktiveret model kunne ikke indlæses, så der analyseres ingen lyd. Siden AI-modeller viser, hvilken model der fejlede og hvorfor.",
+      "loadFailedAction": "Vis status for AI-modeller",
+      "failingTitle": "{count, plural, one {En model fejler ved hver analyse} other {# modeller fejler ved hver analyse}}",
+      "failingMessage": "{count, plural, one {{models} er indlæst, men hver analyse fejler, så den registrerer intet.} other {{models} er indlæst, men hver analyse fejler, så de registrerer intet.}} Siden AI-modeller viser backend og fejlen."
     },
     "banner": {
       "title": "Titel",
@@ -788,7 +862,23 @@
     },
     "detail": {
       "species": "Art",
-      "observation": "Observation"
+      "observation": "Observation",
+      "aria": {
+        "downloadAudioClip": "Download lydklip for {name} detektion",
+        "audioRecordingFor": "Lydoptagelse og spektrogram for {name}",
+        "scientificName": "Videnskabeligt navn",
+        "classificationBadges": "Mærker for artsklassifikation",
+        "confidence": "Registreringssikkerhed {confidence}%",
+        "metadata": "Registreringsmetadata",
+        "weatherConditions": "Vejrforhold på registreringstidspunktet",
+        "comments": "Kommentarer til registreringen",
+        "commentText": "Kommentartekst",
+        "commentTimestamp": "Tidsstempel for kommentar",
+        "mainRegion": "Registreringsdetaljer",
+        "tabsHeading": "Faner med registreringsoplysninger",
+        "tabList": "Faner for registreringsdetaljer",
+        "speciesHeadingSuffix": "registreringsdetaljer"
+      }
     },
     "headers": {
       "dateTime": "Dato og tid",
@@ -916,7 +1006,8 @@
     "row": {
       "viewDetails": "Vis detaljer for {species}",
       "play": "Afspil",
-      "playAudio": "Afspil lyd"
+      "playAudio": "Afspil lyd",
+      "imageFailedToLoad": "Billede kunne ikke indlæses"
     },
     "media": {
       "title": "Optagelse og spektrogram",
@@ -1129,7 +1220,167 @@
     "sections": {
       "overview": "Oversigt",
       "database": "Database",
-      "terminal": "Terminal"
+      "inference": "AI-modeller",
+      "terminal": "Terminal",
+      "importExport": "Importer / Eksporter"
+    },
+    "importExport": {
+      "available": "Tilgængelig",
+      "experimental": "Eksperimentel",
+      "comingSoon": "Kommer snart",
+      "loading": "Indlæser...",
+      "runInBackground": "Luk (importen fortsætter i baggrunden)",
+      "runInBackgroundTitle": "Luk denne dialog. Importen fortsætter i baggrunden.",
+      "stepAnnouncement": "Trin {current} af {total}: {name}",
+      "steps": {
+        "source": "Kilde",
+        "mode": "Tilstand",
+        "confirm": "Bekræft",
+        "progress": "Status",
+        "done": "Færdig"
+      },
+      "import": {
+        "sectionTitle": "Importer"
+      },
+      "export": {
+        "sectionTitle": "Eksport",
+        "cardTitle": "Eksportér registreringer",
+        "cardDescription": "Eksportér dine registreringsdata til CSV, JSON eller andre formater."
+      },
+      "birdnetPi": {
+        "cardTitle": "BirdNET-Pi",
+        "cardDescription": "Importér registreringshistorik fra en BirdNET-Pi-SQLite-database (birds.db).",
+        "startButton": "Importér fra BirdNET-Pi",
+        "wizardTitle": "Importér fra BirdNET-Pi",
+        "experimentalNotice": "Import fra BirdNET-Pi er eksperimentel og kan stadig have problemer.",
+        "reportBug": "Rapportér en fejl på GitHub"
+      },
+      "birdsDbUpload": {
+        "cardTitle": "Upload af birds.db",
+        "cardDescription": "Upload en BirdNET-Pi-databasefil direkte fra din browser."
+      },
+      "activity": {
+        "sectionTitle": "Importaktivitet",
+        "empty": {
+          "title": "Ingen importaktivitet",
+          "description": "Når en import kører, vises dens status her."
+        },
+        "openWizard": "Åbn importguiden"
+      },
+      "wizard": {
+        "stepsLabel": "Trin i importguiden"
+      },
+      "sourceAccess": {
+        "pathLabel": "Sti til birds.db (relativ til monteringsroden)",
+        "pathHelpText": "Indtast stien relativt til roden af den eksterne mediemontering, f.eks. birdnet-pi/birds.db",
+        "pathRequiredReason": "Indtast stien til birds.db for at fortsætte",
+        "mountDescription": "Din BirdNET-Pi-database bør ligge på den eksterne mediemontering.",
+        "mountRoot": "Monteringsrod",
+        "nativeTitle": "Ekstern mediemontering påkrævet",
+        "nativeDescription": "BirdNET-Pi-import kræver en ekstern mediemontering, som kun er tilgængelig, når BirdNET-Go kører i en container. Native (ikke-containeriserede) installationer kan ikke bruge denne importfunktion.",
+        "nativeHowTo": "For at importere fra BirdNET-Pi skal du køre BirdNET-Go i en container, hvor BirdNET-Pi-datamappen er monteret som det eksterne medievolumen.",
+        "missingTitle": "Ekstern mediemontering ikke fundet",
+        "missingDescription": "BirdNET-Go kører i en container, men den eksterne mediemontering er ikke tilgængelig. Følg trinnene nedenfor for at opsætte den.",
+        "setupStepsLabel": "Opsætningstrin",
+        "recheckButton": "Tjek igen",
+        "recheckHint": "Når du har gennemført opsætningstrinnene, skal du klikke på Tjek igen for at fortsætte."
+      },
+      "source": {
+        "title": "Hvor ligger dine BirdNET-Pi-data?",
+        "candidatesIntro": "Vi fandt disse BirdNET-Pi-databaser:",
+        "selectButton": "Vælg",
+        "useThisButton": "Brug denne",
+        "detectionsSummary": "{count} registreringer, op til {date}",
+        "kindLocal": "På denne enhed",
+        "kindRemovable": "Flytbart drev",
+        "kindNetwork": "Netværksplacering",
+        "unreadableTitle": "Fundet, men BirdNET-Go kan ikke læse den",
+        "unreadableOwner": "Disse data tilhører en anden bruger ({owner}).",
+        "manualEntryLink": "Kan du ikke se den? Indtast placeringen manuelt",
+        "manualEntryLabel": "Placering af BirdNET-Pi-database",
+        "manualValidating": "Tjekker...",
+        "manualValid": "Fandt {count} registreringer.",
+        "manualNotFound": "Vi kunne ikke finde en fil der.",
+        "manualUnreadable": "Fandt den, men BirdNET-Go kan ikke læse den endnu.",
+        "manualInvalid": "Den fil er ikke en BirdNET-Pi-database.",
+        "zeroTitle": "Vi kunne ikke finde den automatisk",
+        "zeroDescription": "Tilslut drevet med dine BirdNET-Pi-data, og tjek igen.",
+        "checkAgainButton": "Tjek igen",
+        "showCommandsLabel": "Vis kommandoer",
+        "containerUnreadableHint": "BirdNET-Go (kører som UID {uid}) kan ikke læse denne fil. Ret tilladelserne på værten, så UID {uid} kan læse den, og tjek derefter igen.",
+        "elevation": {
+          "copying": "Dine data kopieres...",
+          "passwordTitle": "BirdNET-Go har brug for tilladelse til at læse disse data",
+          "passwordDescription": "Indtast administratoradgangskoden for denne enhed, så BirdNET-Go kan kopiere dataene.",
+          "passwordLabel": "Administratoradgangskode",
+          "passwordRequiredReason": "Indtast administratoradgangskoden for at fortsætte",
+          "httpWarning": "Denne side bruger ikke HTTPS. Administratoradgangskoden sendes ukrypteret over dit lokale netværk. Fortsæt kun på et netværk, du har tillid til.",
+          "submitButton": "Kopiér og fortsæt",
+          "fallbackTitle": "Kør denne kommando for at give adgang",
+          "fallbackDescription": "BirdNET-Go kan ikke hæve rettighederne automatisk. Kør kommandoen nedenfor, og klik derefter på Tjek igen.",
+          "disabledNote": "Rettighedsforhøjelse i appen er slået fra. Brug kommandoen nedenfor for at give adgang.",
+          "failed": "Det virkede ikke. Tjek adgangskoden og prøv igen, eller brug kommandoen nedenfor."
+        }
+      },
+      "mode": {
+        "label": "Hvad vil du importere?",
+        "dbOnly": {
+          "label": "Kun database",
+          "description": "Importér registreringer fra birds.db. Lydklip importeres ikke."
+        },
+        "dbAudio": {
+          "label": "Database + lydklip",
+          "description": "Importér registreringer og de tilhørende lydoptagelser.",
+          "badge": "Ikke tilgængelig",
+          "disabledReason": "Import af lydklip er ikke tilgængelig endnu. Kun import af databasen understøttes."
+        }
+      },
+      "confirm": {
+        "description": "Gennemgå dine importindstillinger, før du starter. Importerede registreringer markeres med kilden birdnet-pi, og dubletter springes automatisk over.",
+        "source": "Kildesti",
+        "mode": "Importtilstand",
+        "tagging": "Kildemærke",
+        "taggingValue": "birdnet-pi (anvendes automatisk)",
+        "deduplicationNote": "Dublerede registreringer (samme art, tid og dato allerede i databasen) springes automatisk over. De nøjagtige antal vises live under importen.",
+        "startButton": "Start import"
+      },
+      "progress": {
+        "label": "Importstatus",
+        "runningLabel": "Import kører",
+        "progressLabel": "{percent}% fuldført",
+        "cancelButton": "Annuller",
+        "cancellingLabel": "Annullerer...",
+        "cancelledMessage": "Importen blev annulleret.",
+        "processed": "Behandlet",
+        "inserted": "Indsat",
+        "skipped": "Sprunget over",
+        "errors": "Fejl",
+        "phase": {
+          "validate": "Validerer",
+          "dedup": "Fjerner dubletter",
+          "import": "Importerer"
+        }
+      },
+      "done": {
+        "successTitle": "Import fuldført",
+        "successDescription": "Dine BirdNET-Pi-registreringer er blevet importeret.",
+        "cancelledTitle": "Import annulleret",
+        "cancelledDescription": "Importen blev annulleret, før den var fuldført.",
+        "errorTitle": "Import mislykkedes",
+        "interruptedTitle": "Import afbrudt",
+        "interruptedDescription": "Forbindelsen til serveren gik tabt, mens importen kørte, så det endelige resultat er ukendt. Tjek dine registreringer, og start importen igen om nødvendigt.",
+        "viewDetectionsLink": "Se importerede registreringer",
+        "partialInserted": "{count} registreringer blev importeret før annulleringen.",
+        "importAnother": "Importér igen"
+      },
+      "errors": {
+        "loadFailed": "Importstatus kunne ikke indlæses. Prøv igen.",
+        "mediaLoadFailed": "De eksterne medier kunne ikke tjekkes. Prøv igen.",
+        "alreadyRunning": "En import er allerede i gang. Vent, til den er fuldført.",
+        "startFailed": "Importen kunne ikke startes. Prøv igen.",
+        "cancelFailed": "Importen kunne ikke annulleres.",
+        "importFailed": "Import mislykkedes. Tjek din konfiguration, og prøv igen."
+      }
     },
     "database": {
       "title": "Databaseadministration",
@@ -1322,10 +1573,10 @@
           "targetV2": "Mål (V2)",
           "recordsLabel": "Poster",
           "sizeLabel": "Størrelse",
-          "prerequisitesNotMet": "Forudsætninger ikke opfyldt — løs kritiske problemer nedenfor",
+          "prerequisitesNotMet": "Forudsætninger ikke opfyldt - løs kritiske problemer nedenfor",
           "validatingTitle": "Validerer data",
           "validatingBody": "Sammenligner {count} ældre poster med V2-databasen...",
-          "dirtyRecordsCatchup": "{count} ændrede poster — vil forsøge afstemning",
+          "dirtyRecordsCatchup": "{count} ændrede poster - vil forsøge afstemning",
           "cutoverTitle": "Fuldfører skift",
           "cutoverBody": "Afslutter overgang til V2-databasen...",
           "migratingPhase": "Migrerer {phase}",
@@ -1334,7 +1585,7 @@
           "percentComplete": "{percent}% fuldført",
           "recordsPerSec": "{rate} poster/sek",
           "calculating": "Beregner...",
-          "dirtyWriteFailed": "{count} poster kunne ikke skrives — vil blive afstemt under validering"
+          "dirtyWriteFailed": "{count} poster kunne ikke skrives - vil blive afstemt under validering"
         },
         "details": {
           "title": "Databasedetaljer",
@@ -1484,6 +1735,136 @@
         }
       }
     },
+    "inference": {
+      "title": "AI-modeller & Inferens",
+      "loading": "Indlæser inferensstatus",
+      "error": "Kunne ikke indlæse inferensstatus",
+      "vad": {
+        "section": "Privatlivsbeskyttelse",
+        "title": "Silero VAD",
+        "active": "Aktiv",
+        "activeHelp": "Modellen til taledetektering er indlæst og bedømmer lyd.",
+        "idle": "Inaktiv",
+        "idleHelp": "Aktiveret og klar; modellen indlæses, når det første lydsegment bedømmes.",
+        "disabled": "Deaktiveret",
+        "disabledHelp": "Privatlivsbeskyttelse er slået fra i indstillingerne for privatlivsfilteret.",
+        "unavailable": "Ingen model",
+        "unavailableHelp": "Der er ingen model til taledetektering tilgængelig i denne build. Angiv en sti til en VAD-model i indstillingerne for privatlivsfilteret, eller brug en build med en indlejret model.",
+        "description": "Silero VAD er en specialiseret akustisk model, der registrerer menneskelig tale. Den driver privatlivsfilteret og kasserer lyd, når der er tale til stede, så stemmer holdes ude af dine optagelser.",
+        "threshold": "Tærskelværdi",
+        "speechHits": "Taletræffere",
+        "recentTitle": "Nylig tale",
+        "recentEmpty": "Ingen tale registreret endnu",
+        "colWhen": "Tidspunkt",
+        "colProbability": "Sandsynlighed",
+        "colSource": "Kilde"
+      },
+      "sectionHardware": "Hardware",
+      "sectionBackends": "Inferens-backends",
+      "sectionModels": "Modeller",
+      "noModels": "No models are currently loaded",
+      "architecture": "Arkitektur",
+      "cpu": "CPU",
+      "environment": "Miljø",
+      "fp16": "FP16",
+      "fp16Supported": "FP16 understøttet",
+      "fp16Unsupported": "FP16 ikke understøttet",
+      "advanced": "Avanceret",
+      "capabilities": "Egenskaber",
+      "capabilitiesHelp": "Hardware-tags, der bruges til at matche denne maskine med de tilgængelige modelbygninger.",
+      "backendTflite": "TensorFlow Lite",
+      "backendOnnx": "ONNX Runtime",
+      "backendOpenvino": "OpenVINO",
+      "available": "Tilgængelig",
+      "notAvailable": "Ikke tilgængelig",
+      "active": "Aktiv",
+      "inactive": "Inaktiv",
+      "initialized": "Initialiseret",
+      "version": "Version",
+      "devices": "Enheder",
+      "board": "Bundkort",
+      "soc": "SoC",
+      "memory": "Hukommelse",
+      "cores": "Kerner",
+      "gpu": "Grafik",
+      "gpuReachable": "Tilgængelig",
+      "gpuNotReachable": "Ikke tilgængelig",
+      "gpuReasonRenderNodeUnavailable": "Ingen GPU-enhedsknude er synlig for serveren. I Docker skal du tilknytte /dev/dri ind i containeren; på en oprindelig installation skal du tjekke, at grafikdriveren er indlæst.",
+      "gpuReasonRenderNodePermission": "GPU-enhedsknuden kan ikke åbnes. Enten skal den konto BirdNET-Go kører som have adgang til enhedens gruppe, normalt 'render', eller også fik containeren enheden med -v i stedet for --device, hvilket ikke giver adgang til den.",
+      "gpuReasonNoRuntime": "BirdNET-Go accelererer i øjeblikket kun inferens på Intel-grafik, så dette kort vil ikke blive brugt.",
+      "gpuReasonUnknown": "Denne GPU kan ikke bruges til inferens i denne version.",
+      "stock": "Standard",
+      "custom": "Brugerdefineret",
+      "sampleRate": "Samplingsfrekvens",
+      "clipLength": "Segmentlængde",
+      "species": "Arter",
+      "invocations": "Segmenter analyseret",
+      "avgLatency": "Gns. forsinkelse",
+      "maxLatency": "Maks. forsinkelse",
+      "rtf": "RTF",
+      "rtfLabel": "Realtidsfaktor",
+      "approxRam": "Ca. vært RAM (RSS)",
+      "approxRamTooltip": "Ca. vært RAM (RSS) målt ved modelindlæsning. Ekskluderer GPU VRAM.",
+      "latencyChart": "Forsinkelse (ms)",
+      "rtfChart": "Realtidsfaktor",
+      "sources": "Lydkilder",
+      "noSources": "Ingen kilder tilsluttet",
+      "primaryFallback": "primær (fallback)",
+      "sourceNotRunning": "analyserer ikke",
+      "sourceNotRunningTooltip": "Denne kilde er tildelt modellen i indstillingerne, men dens lyd når ikke modellen, så den producerer ingen detektioner. Kontrollér, at lydkilden er forbundet og sender lyd.",
+      "modelNotAnalyzingTooltip": "En eller flere lydkilder tildelt denne model sender ikke lyd til den, så den producerer ingen detektioner. Se kilderne anført nedenfor.",
+      "sourcesDegraded": "{count} af {total} kilder nede",
+      "sourcesDegradedTooltip": "Nogle, men ikke alle af denne models lydkilder er nede, så den analyserer stadig via de fungerende. Den specifikke kilde, der er nede, og hvordan det løses, er anført nedenfor.",
+      "notMeasured": "n/a",
+      "unitMs": "ms",
+      "unitKhz": "kHz",
+      "unitSec": "s",
+      "sectionAudio": "Lyd",
+      "queueDepth": "Kødybde",
+      "queueDepthChart": "Kødybde",
+      "droppedChunks": "Tabte bidder",
+      "queueCapacity": "Kapacitet",
+      "lastSeen": "Sidst set",
+      "lastSeenNever": "Ingen detektioner endnu",
+      "deviceHelp": "Den beregningsenhed, som denne model kører inferens på (CPU, GPU eller ukendt).",
+      "paused": "Pauseret",
+      "pausedScheduleHelp": "Denne model kører kun efter en tidsplan og er i øjeblikket sat på pause, så den behandler ikke lyd.",
+      "activityPaused": "Pauseret af tidsplan",
+      "lastHeard": "Sidst hørt",
+      "lastHeardHint": "Seneste forudsigelser over tærsklen, til diagnostik. Inkluderer ikke-fugle- og uden for område-resultater, der ikke gemmes som registreringer.",
+      "lastHeardNever": "Intet hørt endnu",
+      "confidenceColumn": "Konf.",
+      "heardWhen": "Hvornår",
+      "coDetectedColumn": "Også",
+      "coDetectedHelp": "Andre modeller, der registrerede denne art inden for {seconds} s",
+      "outOfRangeHelp": "Uden for områdefilteret (vist til diagnostik, ikke gemt som registrering)",
+      "peak": "spids",
+      "activityActive": "Inferens aktiv",
+      "activityIdle": "Inaktiv",
+      "throughput": "Gennemløb",
+      "throughputUnit": "/s",
+      "throughputChart": "Gennemløb (/s)",
+      "errorRate": "Fejlrate",
+      "loadFailures": "Indlæsningsfejl",
+      "rtfHelp": "Realtidsfaktor: inferenstid divideret med kliplængde. Under 1,0 betyder, at modellen analyserer et segment hurtigere end realtid; over 1,0 betyder, at den sakker bagud.",
+      "queueDepthHelp": "Lydsegmenter, der venter på at blive analyseret. Forbliver nær nul, når analysen følger med; et stigende tal betyder, at den sakker bagud.",
+      "queueCapacityHelp": "Maksimalt antal segmenter køen kan rumme før ny lyd kasseres.",
+      "droppedChunksHelp": "Lydbidder kasseret, fordi køen var fuld. Bør forblive på nul.",
+      "throughputHelp": "Segmenter analyseret pr. sekund af denne model.",
+      "errorRateHelp": "Andel af analyseforsøg, der mislykkedes.",
+      "loadFailuresHelp": "Antal gange denne model ikke kunne indlæses.",
+      "fp16Help": "16-bit flydende kommatal. Hardware, der understøtter det, kan køre nogle modeller hurtigere og med mindre hukommelse.",
+      "invocationsHelp": "Totalt antal lydsegmenter denne model har analyseret siden opstart.",
+      "noModelsHint": "Ingen lydkilde konfigureret endnu?",
+      "noModelsHintLink": "Konfigurer lydkilder",
+      "modelFailing": "hver analyse fejler",
+      "lastSuccess": "Seneste succes",
+      "lastSuccessHelp": "Hvornår denne model sidst analyserede lyd uden fejl.",
+      "lastSuccessNever": "Ingen siden modellen blev indlæst",
+      "modelFailingHelp": "{reason} Prøv en anden version af denne model under Indstillinger > Analyse > Modeller, eller tjek den backend og præcision, der vises ovenfor.",
+      "modelFailingReasonNonFinite": "Alle de seneste analyser fejlede, fordi modellen returnerede ugyldige scorer (NaN eller uendelige), så den registrerer intet.",
+      "modelFailingReasonError": "Alle de seneste analyser fejlede, fordi inferensen returnerede en fejl, så modellen registrerer intet."
+    },
     "metrics": {
       "cpu": "CPU",
       "memory": "Hukommelse",
@@ -1539,8 +1920,54 @@
     "reattach": "Tilknyt igen"
   },
   "analytics": {
-    "title": "Oversigt",
+    "hub": {
+      "tabs": {
+        "patterns": "Aktivitetsmønstre",
+        "trends": "Tendenser",
+        "biodiversity": "Biodiversitet",
+        "quality": "Gennemgang og nøjagtighed",
+        "summary": "Oversigt",
+        "nocturnal": "Nataktivitet",
+        "weather": "Vejr",
+        "soundscape": "Lydlandskab"
+      },
+      "aria": {
+        "tabs": "Analyseafsnit"
+      },
+      "controls": {
+        "source": "Kilde",
+        "sourceAll": "Alle kilder",
+        "sourceLoading": "Indlæser lydkilder...",
+        "sourceNone": "Ingen lydkilder med detektioner endnu.",
+        "sourceNotApplicable": "Graferne i denne sektion filtrerer ikke efter kilde.",
+        "speciesNotApplicable": "Diagrammerne i dette afsnit filtrerer ikke efter art."
+      },
+      "card": {
+        "error": "Diagrammet kunne ikke indlæses",
+        "retry": "Prøv igen",
+        "notEnoughData": "Ikke nok data endnu",
+        "notEnoughDataHint": "Dette diagram kræver mindst {min} datapunkter. Fortsæt optagelsen, og kig forbi igen snart.",
+        "export": "Eksporter",
+        "exportComingSoon": "CSV-eksport kommer snart."
+      }
+    },
     "loadingError": "Kunne ikke indlæse nogle analysedata. Prøv venligst igen senere.",
+    "comingSoon": {
+      "badge": "Kommer snart",
+      "plannedTitle": "Planlagte funktioner",
+      "weather": {
+        "description": "Fugleaktivitet målt mod lokale vejrforhold. Denne visning vil korrelere dine registreringer med temperatur, vind og nedbør.",
+        "feature1": "Korreler registreringer med temperatur, vind og nedbør",
+        "feature2": "Se, hvordan vejrfronter påvirker artsaktiviteten",
+        "feature3": "Sammenlign sæsonaktivitet med historiske vejrdata"
+      },
+      "soundscape": {
+        "description": "Et kig på den overordnede akustiske karakter af dit miljø ved hjælp af akustiske indeks til at opsummere lydlandskabets mangfoldighed over tid.",
+        "feature1": "Akustiske indeks, der opsummerer lydlandskabets kompleksitet",
+        "feature2": "Spor biodiversitet via omgivende lyd over tid",
+        "feature3": "Opdage daggry- og tusmørkekor i det akustiske register"
+      }
+    },
     "stats": {
       "totalDetections": "Samlede registreringer",
       "uniqueSpecies": "Unikke arter",
@@ -1619,6 +2046,7 @@
         "dateTime": "Dato & tid",
         "species": "Art",
         "confidence": "Sikkerhed",
+        "source": "Kilde",
         "timeOfDay": "Tid på dagen"
       },
       "noRecentDetections": "Ingen seneste registreringer fundet",
@@ -1647,7 +2075,6 @@
       }
     },
     "advanced": {
-      "title": "Avancerede analyser",
       "chartControls": "Diagramstyring",
       "dateRange": "Datointerval",
       "chartOptions": "Diagramindstillinger",
@@ -1671,11 +2098,11 @@
       "charts": {
         "timeOfDay": {
           "title": "Registreringsmønstre efter tid på dagen",
-          "description": "Viser gennemsnitligt antal registreringer i løbet af dagen for valgte arter",
+          "description": "Gennemsnitligt antal registreringer pr. dag i hver time, på tværs af det valgte datointerval og de valgte arter",
           "noData": "Ingen tidsdata tilgængelig",
           "noDataHint": "Vælg arter og et datointerval for at se mønstre",
           "axisTime": "Tid på dagen",
-          "axisCount": "Antal registreringer"
+          "axisCount": "Gns. registreringer / dag"
         },
         "dailyTrend": {
           "title": "Artsregistreringstendenser",
@@ -1693,6 +2120,126 @@
           "noDataHint": "Vælg et datointerval for at se artsdiversitetstendenser",
           "axisDate": "Dato",
           "axisUniqueSpecies": "Unikke arter"
+        },
+        "accumulation": {
+          "title": "Artsakkumuleringskurve",
+          "description": "Cumulative number of distinct species detected within the selected period. The curve climbs as new species appear and flattens toward an asymptote once the common ones have been recorded; a still-rising tail means more species are likely waiting to be found.",
+          "noData": "Ingen artsakkumuleringsdata tilgængelige",
+          "noDataHint": "Vælg en bredere datointerval for at se artslisten bygge sig op over tid",
+          "ariaLabel": "Artsakkumuleringskurve: kumulative unikke arter detekteret over perioden",
+          "axisDate": "Dato",
+          "axisSpecies": "Kumulative arter",
+          "totalSpecies": "{species} arter",
+          "tooltipCumulative": "Kumulative arter",
+          "tooltipNew": "Nye i perioden",
+          "summary": "Kumulativ artsakkumulering over {days} dage, som nåede {species} unikke arter ved periodens slutning."
+        },
+        "yearOverYear": {
+          "title": "År-til-år tracker",
+          "description": "Kumulative detektioner hidtil i år mod de samme kalenderdatoer sidste år. Det skyggede bånd er det løbende gab mellem de to; hvis dette års linje ligger over sidste års, betyder det, at du er forud for sidste års tempo.",
+          "noData": "Ingen år-til-år data tilgængelige",
+          "noDataHint": "Detektioner fra i år og sidste år opbygges her som året skrider frem",
+          "ariaLabel": "År-til-år tracker: kumulative detektioner i år kontra samme periode sidste år",
+          "axisDate": "Dato",
+          "axisCount": "Kumulative detektioner",
+          "legendThis": "{year} (i år)",
+          "legendLast": "{year} (sidste år)",
+          "tooltipDelta": "Forskel",
+          "summary": "År til år: ved {monthDay} har {currentYear} {thisYear} kumulative detektioner mod {lastYear} for {previousYear} (en forskel på {delta})."
+        },
+        "phenology": {
+          "title": "Ankomst & Afrejse Fænologi",
+          "description": "Første og sidste detektion af hver art i den valgte periode, tegnet som opholdsbjælker for de mest detekterede arter. Læs det oppefra og ned i ankomstrækkefølge for at se hvem der dukker op først og hvem der bliver længst henover sæsonen.",
+          "noData": "Ingen fænologidata tilgængelige",
+          "noDataHint": "Vælg et bredere datointerval for at se hvornår arter ankommer og rejser",
+          "ariaLabel": "Ankomst og afrejse fænologi: opholdsbjælker der viser hver arts spænd fra første til sidste detektion",
+          "axisDate": "Dato",
+          "summary": "Ankomst og afrejse opholdsspænd for {species} arter over den valgte periode.",
+          "tooltipFirst": "Først detekteret",
+          "tooltipLast": "Sidst detekteret",
+          "tooltipResidency": "Ophold",
+          "tooltipCount": "Detektioner",
+          "residencyDays": "{days} dage"
+        },
+        "heatmap": {
+          "title": "Sæsonmæssig Aktivitets-heatmap",
+          "description": "Detection density by date and time of day, revealing migration waves and dawn-chorus drift",
+          "noData": "Ingen aktivitetsdata tilgængelige",
+          "noDataHint": "Select a date range to view seasonal activity patterns",
+          "axisDate": "Dato",
+          "axisTime": "Tid på dagen",
+          "tooltipTime": "Tid",
+          "tooltipCount": "Detektioner",
+          "legendLess": "Mindre",
+          "legendMore": "Mere ({max})",
+          "ariaLabel": "Sæsonmæssig aktivitets-heatmap: detektionstæthed efter dato og tid på dagen",
+          "summary": "{total} detektioner over {days} dage. Mest travlt omkring {time} den {date}."
+        },
+        "ridgeline": {
+          "title": "Hvem synger hvornår",
+          "description": "Hour-of-day activity for the most-detected species, sorting dawn singers from all-day and nocturnal birds",
+          "noData": "Ingen aktivitetsdata for arter tilgængelig",
+          "noDataHint": "Select a wider date range to compare species activity patterns",
+          "ariaLabel": "Aktivitetsdiagram: fordeling af aktivitet pr. time for hver art",
+          "axisTime": "Tidspunkt på dagen",
+          "note": "Viser de {count} mest detekterede arter",
+          "tooltipDetections": "Detektioner",
+          "tooltipPeak": "Top",
+          "summary": "Aktivitet pr. time for {count} arter. Mest aktiv: {species} omkring {time}."
+        },
+        "succession": {
+          "title": "Akustisk succession",
+          "description": "How the soundscape's top species hand off through the day, shown as stacked bands of hourly detections from pre-dawn through night",
+          "noData": "Ingen akustiske successionsdata tilgængelige",
+          "noDataHint": "Select a wider date range to see how species hand off through the day",
+          "ariaLabel": "Acoustic succession streamgraph: stacked hour-of-day detections for the top species",
+          "axisTime": "Tid på dagen",
+          "note": "Kombineret timeaktivitet for de top {count} arter efter detektionsvolumen",
+          "tooltipDetections": "Detektioner",
+          "tooltipPeak": "Top",
+          "summary": "Time-for-time succession for {count} arter. Mest aktiv: {species} omkring {time}."
+        },
+        "dawnOnset": {
+          "title": "Daggrykorets start",
+          "description": "Hvornår morgenkoret starter hver dag i forhold til borgerligt tusmørke, hvilket isolerer det sæsonmæssige skift fra klokkeslættet",
+          "noData": "Ingen daggrykordata tilgængelige",
+          "noDataHint": "Select a wider date range to track how the dawn chorus shifts across the seasons",
+          "ariaLabel": "Tracker for daggrykorets start: daglig korstart i forhold til borgerligt tusmørke",
+          "axisDate": "Dato",
+          "axisOnset": "Minutter fra borgerligt tusmørke",
+          "civilDawn": "Borgerligt tusmørke",
+          "tooltipOnset": "Start",
+          "tooltipOnsetAfter": "{minutes} min efter borgerligt tusmørke",
+          "tooltipOnsetBefore": "{minutes} min før borgerligt tusmørke",
+          "tooltipOnsetAt": "Ved borgerligt tusmørke",
+          "tooltipCount": "Detektioner",
+          "summary": "Daggrykorets start i forhold til borgerligt tusmørke over {days} dage ({plotted} med en målbar start)."
+        },
+        "nocturnal": {
+          "title": "Nataktivitetsur",
+          "description": "Detektioner rundt om det 24-timers ur med dagstimerne skyggelagt, så nataktiviteten skiller sig ud",
+          "noData": "Ingen aktivitetsdata tilgængelige",
+          "noDataHint": "Vælg et bredere datointerval eller en mere aktiv periode for at se det daglige aktivitetsmønster",
+          "ariaLabel": "Nataktivitetsur: detektioner pr. time på dagen med dagsskygge",
+          "axisHour": "Time på dagen",
+          "tooltipHour": "{start} til {end}",
+          "tooltipCount": "Detektioner",
+          "summary": "Detektionsaktivitet pr. time på dagen ({total} detektioner, mest aktiv omkring {peak}). Dagstimerne er skyggelagte.",
+          "legendDay": "Dag",
+          "legendTwilight": "Tusmørke",
+          "legendNight": "Nat"
+        },
+        "confidence": {
+          "title": "Konfidensfordeling",
+          "description": "Hvor sikker modellen er pr. art, så du kan se hvilke fugle den oftest er i tvivl om",
+          "noData": "Ingen konfidensdata tilgængelig",
+          "noDataHint": "Vælg et bredere datointerval for at sammenligne modellens konfidens på tværs af arter",
+          "ariaLabel": "Konfidensfordeling: histogram pr. art af detektionskonfidens",
+          "axisLabel": "Konfidens",
+          "note": "Viser de {count} mest detekterede arter",
+          "tooltipCount": "Detektioner",
+          "tooltipPeak": "Højeste konfidens",
+          "summary": "Fordeling af detektionskonfidens for {count} arter. {species} ligger omkring {time} konfidens."
         },
         "tooltips": {
           "date": "Dato",
@@ -1719,6 +2266,14 @@
     },
     "errors": {
       "loadFailed": "Kunne ikke indlæse analysedata. Prøv venligst igen."
+    },
+    "timeOfDayPeriods": {
+      "night0to4": "Nat (0-4)",
+      "dawn5to8": "Daggry (5-8)",
+      "morning9to11": "Morgen (9-11)",
+      "afternoon12to16": "Eftermiddag (12-16)",
+      "evening17to19": "Aften (17-19)",
+      "night20to23": "Nat (20-23)"
     }
   },
   "settings": {
@@ -1824,11 +2379,11 @@
           "title": "Falsk positiv-filter",
           "description": "Reducer falske detektioner ved at kræve flere bekræftelser på tværs af overlappende lydsegmenter",
           "level": {
-            "label": "Filterniveau"
+            "label": "Styrke for falsk positiv-filter"
           },
           "detectionCount": "{count} bekræftelser krævet. {description}",
           "levels": {
-            "off": "Ingen filtrering – accepterer første detektion med det samme",
+            "off": "Ingen filtrering - accepterer første detektion med det samme",
             "lenient": "Til lav lydkvalitet (RTSP-kameraer, webcam-mikrofoner)",
             "moderate": "Balanceret til typiske hobbyopsætninger",
             "balanced": "Oprindelig adfærd fra før september 2025",
@@ -1854,7 +2409,19 @@
           "description": "Begræns detektion til arter, der er sandsynlige i dit geografiske område",
           "stationLocation": {
             "label": "Stationsplacering",
-            "helpText": "Stationsplacering, bruges til vejrdata og til at begrænse fuglearter til dem, der er sandsynlige i området."
+            "helpText": "Stationsplacering, bruges til vejrdata og til at begrænse fuglearter til dem, der er sandsynlige i området.",
+            "automaticLocation": "Automatisk placering",
+            "useCurrentLocation": "Brug browserplacering",
+            "locationHelp": "Udfylder koordinaterne ved hjælp af denne browsers placering.",
+            "locating": "Finder placering...",
+            "accuracy": "Anslået nøjagtighed: inden for {accuracy} m",
+            "locationDetected": "Browserens placering blev fundet.",
+            "geolocationUnsupported": "Denne browser understøtter ikke enhedsplacering. Indtast koordinater manuelt, eller brug kortet.",
+            "geolocationRequiresHttps": "Browserplacering kræver HTTPS eller localhost. Indtast koordinater manuelt, eller brug kortet.",
+            "geolocationDenied": "Placeringstilladelse blev afvist. Indtast koordinater manuelt, eller brug kortet.",
+            "geolocationUnavailable": "Enheden kunne ikke bestemme sin placering. Indtast koordinater manuelt, eller brug kortet.",
+            "geolocationTimedOut": "Placeringsanmodningen fik timeout. Prøv igen, indtast koordinater manuelt, eller brug kortet.",
+            "geolocationFailed": "Enhedens placering kunne ikke bestemmes. Indtast koordinater manuelt, eller brug kortet."
           },
           "latitude": {
             "label": "Breddegrad",
@@ -2045,7 +2612,7 @@
                 },
                 "userRequested": {
                   "label": "Kun efter brugerforespørgsel",
-                  "helpText": "Generér kun spektrogrammer, når du klikker på genereringsknappen. Perfekt til ressourcebegrænsede systemer (Raspberry Pi 3/Zero) – ingen automatisk overhead, du styrer hvornår CPU'en bruges."
+                  "helpText": "Generér kun spektrogrammer, når du klikker på genereringsknappen. Perfekt til ressourcebegrænsede systemer (Raspberry Pi 3/Zero) - ingen automatisk overhead, du styrer hvornår CPU'en bruges."
                 }
               },
               "style": {
@@ -2068,7 +2635,7 @@
               },
               "dynamicRange": {
                 "label": "Dynamisk område",
-                "helpText": "Styrer kontrasten – lavere værdier får svage signaler til at fremstå tydeligere, højere værdier viser flere detaljer.",
+                "helpText": "Styrer kontrasten - lavere værdier får svage signaler til at fremstå tydeligere, højere værdier viser flere detaljer.",
                 "options": {
                   "highContrast": "Høj kontrast (80 dB)",
                   "standard": "Standard (100 dB)",
@@ -2110,9 +2677,9 @@
           "label": "Landestandard",
           "helpText": "Landestandard for oversatte artsfællesnavne."
         },
-        "tensorflowThreads": {
-          "label": "TensorFlow CPU-tråde",
-          "helpText": "Antal CPU-tråde. Sæt til 0 for at bruge alle tilgængelige tråde."
+        "inferenceThreads": {
+          "label": "CPU-tråde til inferens",
+          "helpText": "Antal CPU-tråde, der bruges til modelinferens. Sæt til 0 for at bruge alle tilgængelige tråde. Har ingen effekt på modeller, der kører på en GPU."
         }
       },
       "errors": {
@@ -2177,10 +2744,10 @@
         },
         "whatsIncluded": {
           "title": "Hvad er inkluderet i rapporten:",
-          "applicationLogs": "**Applikationslogfiler** – Nylige fejl og debuginformation",
-          "configuration": "**Konfiguration** – Dine indstillinger med følsomme data fjernet",
-          "systemInfo": "**Systeminformation** – OS-version, hukommelse og kørselsdetaljer",
-          "notIncluded": "**IKKE inkluderet** – Lydfiler, fugledetektioner eller personlige data"
+          "applicationLogs": "**Applikationslogfiler** - Nylige fejl og debuginformation",
+          "configuration": "**Konfiguration** - Dine indstillinger med følsomme data fjernet",
+          "systemInfo": "**Systeminformation** - OS-version, hukommelse og kørselsdetaljer",
+          "notIncluded": "**IKKE inkluderet** - Lydfiler, fugledetektioner eller personlige data"
         },
         "userMessage": {
           "label": "Beskriv problemet",
@@ -2276,7 +2843,8 @@
           "detectionPath": "Relativ sti til detektion (f.eks. \"/ui/detections/1234\")",
           "detectionUrl": "Fuld URL til detektion i brugergrænsefladen",
           "imageUrl": "Link til artsbillede",
-          "daysSinceFirstSeen": "Antal dage siden første detektion"
+          "daysSinceFirstSeen": "Antal dage siden første detektion",
+          "daysSinceLastSeen": "Antal dage siden seneste registrering"
         }
       },
       "testNotification": {
@@ -2391,6 +2959,7 @@
             "shoutrrrDocs": "https://github.com/nicholas-fedor/shoutrrr?tab=readme-ov-file#supported-services"
           },
           "saveButton": "Gem udbyder",
+          "saveWaitingNtfyCheck": "Venter på, at ntfy-forbindelsestjekket bliver færdigt",
           "savingButton": "Gemmer...",
           "cancelButton": "Annullér",
           "testButton": "Test",
@@ -2459,9 +3028,10 @@
             "testConnection": "Test forbindelse",
             "connectionOk": {
               "https": "HTTPS fungerer",
-              "http": "HTTP fungerer – serveren bruger ikke HTTPS"
+              "http": "HTTP fungerer - serveren bruger ikke HTTPS"
             },
-            "connectionFailed": "Kunne ikke oprette forbindelse – kontrollér værtsnavn og serverstatus",
+            "connectionFailed": "Kunne ikke oprette forbindelse - kontrollér værtsnavn og serverstatus",
+            "checkError": "Kunne ikke verificere serveren - tjek adressen, eller genindlæs siden og prøv igen",
             "auth": {
               "label": "Godkendelse (valgfrit)",
               "username": {
@@ -2592,7 +3162,11 @@
         "enable": "Aktivér privatlivsfiltrering",
         "disabled": "Privatlivsfiltrering er deaktiveret",
         "confidenceLabel": "Konfidenstærskel for menneskelig detektion",
-        "confidenceHelp": "Indstil konfidensniveauet for detektering af menneskelige stemmer. Lavere værdier gør filteret mere følsomt"
+        "confidenceHelp": "Indstil konfidensniveauet for detektering af menneskelige stemmer. Lavere værdier gør filteret mere følsomt",
+        "vadEnable": "Aktivér Privatlivsbeskyttelse (Silero VAD)",
+        "vadHelp": "Kører en dedikeret neural taledetekteringsmodel sammen med klassifikatoren for robust talefiltrering. Forbruger yderligere systemressourcer (ca. 20-30 MB RAM og CPU-inferens pr. segment).",
+        "vadThresholdLabel": "Tærskel for privatlivsbeskyttelse",
+        "vadThresholdHelp": "Følsomhedstærskel for taleaktivitetsdetektoren (standard 0,35). Lavere værdier gør filtret mere følsomt over for svag eller fjern tale."
       },
       "falsePositivePrevention": {
         "title": "Forebyggelse af falske positiver",
@@ -2712,7 +3286,7 @@
             "label": "Enhedsnavn",
             "helpText": "Basisnavnet for enheder som de vises i Home Assistant. Hver lydkilde vil have sin egen enhed knyttet til denne hoved BirdNET-Go-enhed."
           },
-          "sensorsNote": "<strong>Sensorer oprettet:</strong> For hver lydkilde modtager Home Assistant: Seneste art, Konfidens, Videnskabeligt navn og Lydniveau (hvis aktiveret). Bridge-enheden inkluderer online/offline-tilgængelighedsstatus.",
+          "sensorsNote": "<strong>Sensorer oprettet:</strong> For hver lydkilde modtager Home Assistant: Seneste art, Konfidens, Videnskabeligt navn og Lydniveau (hvis aktiveret). Bridge-enheden inkluderer online/offline-tilgængelighedsstatus. Hver kildes detektionssensorer læser kildens eget MQTT-emne, &lt;base_topic&gt;/sources/&lt;source_id&gt;, og dens Lydniveau-sensor læser underemnet &lt;base_topic&gt;/sources/&lt;source_id&gt;/soundlevel, så en registrering fra én kilde aldrig nulstiller en anden kildes sensorer.",
           "discovery": {
             "button": "Send Discovery",
             "success": "Discovery-beskeder sendt til Home Assistant",
@@ -2758,7 +3332,8 @@
             "none": "Ingen",
             "yrno": "Yr.no",
             "openweather": "OpenWeather",
-            "wunderground": "Weather Underground"
+            "wunderground": "Weather Underground",
+            "pirateweather": "Pirate Weather"
           }
         },
         "wunderground": {
@@ -2779,6 +3354,16 @@
             "helpText": "Vælg enheder for temperatur og vindhastighed (m = metrisk, e = imperial, h = UK-hybrid)."
           }
         },
+        "pirateweather": {
+          "apiKey": {
+            "label": "Pirate Weather API-nøgle",
+            "helpText": "Angiv din Pirate Weather API-nøgle. Påkrævet til vejrdata."
+          },
+          "endpoint": {
+            "label": "API-endpoint",
+            "helpText": "Tilsidesæt standard Pirate Weather API-endpointet om nødvendigt. Standard er https://api.pirateweather.net/forecast hvis feltet er tomt."
+          }
+        },
         "notes": {
           "none": "Ingen vejrdata hentes.",
           "yrno": {
@@ -2786,7 +3371,8 @@
             "freeService": "Yr er en gratis vejrdatatjeneste. For mere information, besøg <a href=\"https://hjelp.yr.no/hc/en-us/articles/206550539-Facts-about-Yr\" class=\"link link-primary\" target=\"_blank\" rel=\"noopener noreferrer\">Yr.no</a>."
           },
           "openweather": "Brug af OpenWeather kræver en API-nøgle. Tilmeld dig en gratis API-nøgle på <a href=\"https://home.openweathermap.org/users/sign_up\" class=\"link link-primary\" target=\"_blank\" rel=\"noopener noreferrer\">OpenWeather</a>.",
-          "wunderground": "Kræver en Weather Underground API-nøgle og et gyldigt PWS stations-ID. Se <a href=\"https://www.wunderground.com/member/devices\" class=\"link link-primary\" target=\"_blank\" rel=\"noopener noreferrer\">Weather Underground</a> for detaljer."
+          "wunderground": "Kræver en Weather Underground API-nøgle og et gyldigt PWS stations-ID. Se <a href=\"https://www.wunderground.com/member/devices\" class=\"link link-primary\" target=\"_blank\" rel=\"noopener noreferrer\">Weather Underground</a> for detaljer.",
+          "pirateweather": "Brug af Pirate Weather kræver en API-nøgle, tilmeld dig på <a href=\"https://pirateweather.net/\" class=\"link link-primary\" target=\"_blank\" rel=\"noopener noreferrer\">Pirate Weather</a>."
         },
         "apiKey": {
           "label": "API-nøgle",
@@ -3006,6 +3592,13 @@
         "typeLabel": "Strømtype",
         "typeHelp": "Strømprotokol - registreres automatisk fra URL",
         "transportLabel": "Protokol",
+        "mediaModeLabel": "Medietilstand",
+        "mediaModeHelp": "Fuld stream anmoder om både lyd og video (videoen kasseres efter afkodning) og fungerer med de fleste kameraer. Auto prøver kun lyd først og skifter til fuld stream, hvis kameraet ikke kan levere lyd alene. Kun lyd åbner aldrig en videoplads på kameraet, men mislykkes, hvis kameraet ikke kan levere lydsporet selv.",
+        "mediaMode": {
+          "auto": "Auto",
+          "audioOnly": "Kun lyd",
+          "fullStream": "Fuld stream"
+        },
         "summary": "{count} strøm(me) konfigureret",
         "healthy": "sund",
         "unhealthy": "usund",
@@ -3152,6 +3745,7 @@
         "dataOutputTitle": "Output af lydniveaudata",
         "dataOutputDescription": "Når aktiveret, publiceres lydniveaumålinger via:",
         "mqttTopic": "MQTT-emne:",
+        "mqttSourceTopic": "MQTT-emne pr. kilde (med Home Assistant discovery):",
         "sseEndpoint": "SSE-endepunkt:",
         "prometheusMetrics": "Prometheus-metrikker:"
       },
@@ -3178,8 +3772,6 @@
         "normalizationDisabled": "Lydnormalisering er deaktiveret",
         "targetLUFSLabel": "Mållydstyrke (LUFS)",
         "targetLUFSHelp": "Integreret lydstyrke-mål i LUFS (Loudness Units relative to Full Scale). -23 LUFS er EBU R128-udsendelsesstandarden. Interval: -40 til -10 LUFS.",
-        "loudnessRangeLabel": "Lydstyrkeinterval (LU)",
-        "loudnessRangeHelp": "Maksimal variation i lydstyrke inden for klippet (0-20 LU). Lavere værdier giver mere ensartet volumen, men kan reducere dynamikken.",
         "truePeakLabel": "Ægte spidsværdigrænse (dBTP)",
         "truePeakHelp": "Maksimal ægte spidsværdi for at forhindre digital klipning (-10 til 0 dBTP). -2 dBTP giver sikker hovedrum for de fleste afspilningssystemer.",
         "normalizationNote": "EBU R128-standard",
@@ -3215,8 +3807,11 @@
         "pathHelp": "Mappe, hvor lydklip gemmes. Relative stier er fra applikationsmappen. Eksempel: 'clips/' eller '/var/audio/birds/'",
         "typeLabel": "Lydformat",
         "typeHelp": "Lydformat for gemte klip. WAV og FLAC er tabsfri (bedste kvalitet, større filer). MP3, AAC og Opus er tabsgivende (mindre filer, let kvalitetstab).",
+        "ultrasonicTypeLabel": "Ultralydsformat",
+        "ultrasonicTypeHelp": "Tabsfri format (WAV eller FLAC), der kun bruges til flagermus- og ultralydsoptagelser over 48 kHz. Disse gemmes med deres fulde kilderate i stedet for formatet ovenfor, så ingen ultralyddetaljer går tabt.",
         "bitrateLabel": "Bitrate",
         "bitrateHelp": "Lydkomprimerings-bitrate for tabsgivende formater. Interval: {min}-{max} kbps. Højere værdier giver bedre kvalitet, men større filer.",
+        "losslessBitrateValue": "Ikke relevant - Tabsfri",
         "losslessNote": "Tabsfri formater bevarer den originale lydkvalitet uden komprimeringsartefakter."
       },
       "audioNormalization": {
@@ -3228,8 +3823,6 @@
         "requiresRecording": "Aktiver klipoptagelse under fanen Optagelse for at bruge lydnormalisering.",
         "targetLUFSLabel": "Mållydstyrke (LUFS)",
         "targetLUFSHelp": "Integreret lydstyrke-mål i LUFS (Loudness Units relative to Full Scale). -23 LUFS er EBU R128-udsendelsesstandarden. Interval: -40 til -10 LUFS.",
-        "loudnessRangeLabel": "Lydstyrkeinterval (LU)",
-        "loudnessRangeHelp": "Maksimal variation i lydstyrke inden for klippet (0-20 LU). Lavere værdier giver mere ensartet volumen, men kan reducere dynamikken.",
         "truePeakLabel": "Ægte spidsværdigrænse (dBTP)",
         "truePeakHelp": "Maksimal ægte spidsværdi for at forhindre digital klipning (-10 til 0 dBTP). -2 dBTP giver sikker hovedrum for de fleste afspilningssystemer.",
         "noteTitle": "EBU R128-standard",
@@ -3284,7 +3877,17 @@
       },
       "models": {
         "recommendBoth": "For bedste artsdækning anbefales det at køre både BirdNET og Perch sammen.",
-        "perchOnlyWarning": "Perch alene producerer færre detektioner. Sænk konfidenstærsklen til 0.50 for meningsfulde resultater, eller aktiver BirdNET ved siden af for bedste dækning."
+        "perchOnlyWarning": "Perch alene producerer færre detektioner. Sænk konfidenstærsklen til 0.50 for meningsfulde resultater, eller aktiver BirdNET ved siden af for bedste dækning.",
+        "loading": "Indlæser detektionsmodeller...",
+        "noneEnabledTitle": "Ingen detektionsmodel aktiveret.",
+        "noneEnabledHelp": "Du kan stadig gemme denne kilde. Dens lyd analyseres af standardmodellerne, så snart en er aktiveret.",
+        "noneEnabledLink": "Åbn modelgalleri",
+        "noneAvailable": "Ingen detektionsmodeller er aktiveret på denne server.",
+        "loadFailedWarning": "En detektionsmodel kunne ikke indlæses, så denne kilde analyseres ikke, før den kommer sig.",
+        "loadFailedLink": "Vis status for AI-modeller",
+        "defaultBadge": "{models} (standard)",
+        "defaultPendingBadge": "Standardmodeller",
+        "noneBadge": "Ingen model indlæst"
       }
     },
     "security": {
@@ -3392,7 +3995,7 @@
           "userIdLabel": "Bruger-ID"
         },
         "line": {
-          "title": "LINE Login",
+          "title": "LINE-login",
           "enableLabel": "Tillad OAuth2-login via LINE",
           "redirectUriTitle": "Omdirigerings-URI til LINE Developers Console:",
           "getCredentialsLabel": "Hent dine legitimationsoplysninger fra LINE Developers Console",
@@ -3403,7 +4006,7 @@
           "userIdLabel": "Bruger-ID"
         },
         "kakao": {
-          "title": "Kakao Login",
+          "title": "Kakao-login",
           "enableLabel": "Tillad OAuth2-login via Kakao",
           "redirectUriTitle": "Omdirigerings-URI til Kakao Developers Console:",
           "getCredentialsLabel": "Hent dine legitimationsoplysninger fra Kakao Developers Console",
@@ -3449,8 +4052,8 @@
         "warningText": "Aktivering af offentlige adgangsfunktioner eksponerer dem for alle, der kan nå denne server. Aktiver kun, hvis du stoler på dit netværksmiljø."
       },
       "privateMode": {
-        "label": "Require login for all UI pages (private mode)",
-        "help": "When enabled, the dashboard, detections, analytics, search, about, and notifications pages all require authentication. Settings and system pages are always protected regardless of this setting. The Public Live Audio toggle below is honoured independently — leaving it on still allows unauthenticated playback. Default is off so guests can browse the read-only UI."
+        "label": "Kræv login for alle UI-sider (privat tilstand)",
+        "help": "Når den er aktiveret, kræver dashboardet, detektioner, analyser, søgning, om og notifikationer alle godkendelse. Indstillinger og systemsider er altid beskyttede, uanset denne indstilling."
       },
       "placeholders": {
         "baseUrl": "https://birdnet.example.com:5500",
@@ -3653,16 +4256,22 @@
         "configureActions": "Konfigurer handlinger",
         "actionsConfigured": "Konfigureret",
         "list": {
-          "threshold": "Tærskel:",
-          "interval": "Interval:",
-          "intervalNone": "Ingen",
-          "actionBadge": "Handling",
           "editTitle": "Rediger konfiguration",
           "removeTitle": "Fjern konfiguration"
         },
         "emptyState": {
           "title": "Ingen konfigurationer endnu.",
           "description": "Klik på \"Tilføj konfiguration\" for at tilpasse artsregistreringsindstillinger."
+        },
+        "table": {
+          "columnScientificName": "Videnskabeligt navn",
+          "intervalDefault": "Standard",
+          "intervalDefaultTooltip": "0 = brug det globale standardinterval",
+          "noActions": "Ingen",
+          "searchPlaceholder": "Søg arter...",
+          "noResults": "Ingen matchende konfigurationer",
+          "editDisabledReason": "Gem eller luk den aktuelle editor, før du redigerer en anden art",
+          "actionsDisabledBusy": "Vent venligst, mens den aktuelle handling fuldføres"
         }
       },
       "synonyms": {
@@ -3789,6 +4398,18 @@
             "hemisphereNote": "Sæsondatoer konfigureres automatisk baseret på din breddegrad. Den nordlige halvkugle bruger standardsæsoner, den sydlige halvkugle har forskudte datoer, og ækvatorielle regioner bruger regn-/tørtider."
           }
         },
+        "infrequent": {
+          "title": "Sporing af sjældent sete arter",
+          "description": "Marker arter, der vender tilbage efter lang tids fravær (sjældne tilbagevendende gæster)",
+          "enabled": {
+            "label": "Aktivér sporing af sjældent sete arter",
+            "helpText": "Spor og giv besked, når en art registreres igen efter lang tids fravær"
+          },
+          "absenceDays": {
+            "label": "Fraværstærskel (dage)",
+            "helpText": "Mindste antal dage siden seneste registrering, før en tilbagevendende art markeres som 'sjældent set' (1-365)"
+          }
+        },
         "months": {
           "january": "Januar",
           "february": "Februar",
@@ -3801,7 +4422,7 @@
           "september": "September",
           "october": "Oktober",
           "november": "November",
-          "december": "December"
+          "december": "Desember"
         },
         "units": {
           "days": "dage",
@@ -3812,7 +4433,7 @@
       "dynamicThreshold": {
         "tabLabel": "Indlærte",
         "title": "Indlærte tærskler",
-        "description": "Denne side viser kørselstidsdata for dynamiske tærskler. Når det er aktiveret under Hovedindstillinger → Registrering, justeres tærskler automatisk ved flere registreringer med høj tillid. Arter vist her antages at forekomme på denne placering.",
+        "description": "Denne side viser kørselstidsdata for dynamiske tærskler. Når det er aktiveret, justeres tærskler automatisk ved flere registreringer med høj tillid. Arter vist her antages at forekomme på denne placering.",
         "stats": {
           "active": "Aktive",
           "atMinimum": "Ved minimum",
@@ -3946,7 +4567,7 @@
         "metric": "Metrik",
         "conditionsSection": "Betingelser",
         "property": "Egenskab",
-        "operator": "Operator",
+        "operator": "Operatør",
         "value": "Værdi",
         "valuePlaceholder": "Indtast værdi",
         "duration": "Varighed (s)",
@@ -3961,8 +4582,8 @@
         "templateTitlePlaceholder": "Lad stå tomt for standard",
         "templateMessage": "Beskedskabelon",
         "templateMessagePlaceholder": "Lad stå tomt for standard",
-        "noConditionsEvent": "Ingen betingelser — reglen udløses ved hver hændelse",
-        "noConditionsMetric": "Ingen betingelser — reglen udløses ved hver metrikopdatering",
+        "noConditionsEvent": "Ingen betingelser - reglen udløses ved hver hændelse",
+        "noConditionsMetric": "Ingen betingelser - reglen udløses ved hver metrikopdatering",
         "eventsCount": "hændelser",
         "metricsCount": "metrikker",
         "durationFor": "i",
@@ -3986,6 +4607,7 @@
           "stream_disconnected": "Strøm afbrudt",
           "stream_error": "Strømfejl",
           "detection_new_species": "Ny art registreret",
+          "detection_infrequent_species": "Sjældent set art registreret",
           "detection_occurred": "Registrering fandt sted",
           "application_started": "Applikation startet",
           "application_stopped": "Applikation stoppet",
@@ -4035,6 +4657,10 @@
         "newSpecies": {
           "name": "Ny art registreret",
           "description": "Notificerer, når en art registreres for første gang"
+        },
+        "infrequentSpecies": {
+          "name": "Sjældent set art registreret",
+          "description": "Giver besked, når en art vender tilbage efter lang tids fravær"
         },
         "streamDisconnected": {
           "name": "Lydstrøm afbrudt",
@@ -4309,7 +4935,16 @@
       "streamTitleDefault": "Fuglelydstrøm",
       "streamArtist": "BirdNET-Go",
       "streamAlbum": "Live stream",
-      "playbackError": "Afspilningsfejl: {details}"
+      "playbackError": "Afspilningsfejl: {details}",
+      "audibleBats": {
+        "title": "Hørbar flagermusafspilning",
+        "subtitle": "Sænk ultralydskald til det menneskelige høreområde.",
+        "timeExpansion": "Tidsudvidelse",
+        "enable": "Aktivér",
+        "disable": "Deaktivér",
+        "generating": "Genererer afledt lyd…",
+        "error": "Kunne ikke generere hørbar flagermuslyd"
+      }
     },
     "spectrogram": {
       "notGenerated": "Spektrogram er endnu ikke genereret",
@@ -4327,8 +4962,10 @@
       "spectrogramLoaded": "Spektrogram indlæst",
       "spectrogramLoadingAria": "Indlæser spektrogram",
       "spectrogramAlt": "Lydspektrogram",
+      "spectrogramForSpecies": "Spektrogram for {species}",
       "spectrogramGeneratingAria": "Genererer spektrogram",
       "generating": "Genererer...",
+      "waiting": "Venter...",
       "queuePosition": "Kø: {position}",
       "loadError": "Kunne ikke indlæse lyd"
     },
@@ -4400,7 +5037,7 @@
         "extracting": "Udtrækker klip...",
         "extractError": "Kunne ikke udtrække klip",
         "formatLabel": "Format",
-        "rangeLabel": "{start}s – {end}s"
+        "rangeLabel": "{start}s - {end}s"
       },
       "processing": {
         "playSelection": "Afspil valg",
@@ -4439,6 +5076,11 @@
       "removeCertificate": "Fjern certifikat",
       "fileReadError": "Kunne ikke læse fil",
       "loading": "Indlæser certifikatoplysninger..."
+    },
+    "birdThumbnail": {
+      "viewDetections": "Se {name} detektioner",
+      "largeView": "Stor visning af {name}",
+      "clickToView": "Klik for at se detektioner"
     }
   },
   "connectivity": {
@@ -4453,7 +5095,7 @@
   },
   "quietHours": {
     "indicator": {
-      "tooltip": "Stille timer aktive — {count} kilde(r) sat på pause"
+      "tooltip": "Stille timer aktive - {count} kilde(r) sat på pause"
     }
   },
   "errors": {
@@ -4476,7 +5118,8 @@
       "typesRequired": "Objekttype og udløsertype er påkrævet",
       "duplicateName": "En regel med dette navn findes allerede",
       "invalidJSON": "Ugyldig JSON",
-      "invalidEscalation": "Eskaleringstrinnene er ugyldige"
+      "invalidEscalation": "Eskaleringstrinnene er ugyldige",
+      "engineUnavailable": "Advarselsmotor er utilgængelig"
     },
     "detection": {
       "invalidDate": "Ugyldigt {paramName}-format, brug ÅÅÅÅ-MM-DD"
@@ -4490,7 +5133,7 @@
       "createFailed": "Kunne ikke oprette sikkerhedskopieringsjob",
       "notFound": "Sikkerhedskopieringsjob ikke fundet eller udløbet",
       "notReady": "Sikkerhedskopiering er ikke klar til download",
-      "fileNotFound": "Sikkerhedskopieringsfil ikke fundet — jobbet kan være udløbet",
+      "fileNotFound": "Sikkerhedskopieringsfil ikke fundet - jobbet kan være udløbet",
       "sqliteOnly": "Sikkerhedskopiering er kun tilgængelig for SQLite-databaser",
       "dbNotConfigured": "Database er ikke konfigureret",
       "unsupportedType": "Kan ikke udføre sikkerhedskopiering på denne datalagertype",
@@ -4509,7 +5152,7 @@
       "noLegacyDB": "Ingen legacy-database fundet",
       "accessFailed": "Kan ikke tilgå legacy-database",
       "restartRequired": "Applikationen skal genstartes efter migrering, før oprydning er tilgængelig",
-      "safetyCheck": "Målfilen ser ud til at være en V2-database — oprydning er ikke tilladt af sikkerhedshensyn",
+      "safetyCheck": "Målfilen ser ud til at være en V2-database - oprydning er ikke tilladt af sikkerhedshensyn",
       "noLegacyTables": "Ingen legacy-tabeller fundet",
       "restartNeeded": "Kan ikke rydde op: Applikationen skal genstartes efter migrering",
       "alreadyRunning": "Oprydning er allerede i gang"
@@ -4524,6 +5167,7 @@
       "birdweatherClientFailed": "Kunne ikke oprette BirdWeather-klient",
       "noWeatherProvider": "Ingen vejrudbyder valgt",
       "openWeatherKeyRequired": "OpenWeather API-nøgle er påkrævet",
+      "pirateWeatherKeyRequired": "Pirate Weather API-nøgle er påkrævet",
       "processorUnavailable": "Processor ikke tilgængelig",
       "discoveryFailed": "Kunne ikke udløse Home Assistant-opdagelse"
     },
@@ -4533,6 +5177,7 @@
       "notFound": "Notifikation ikke fundet",
       "hostRequired": "Host-parameter er påkrævet",
       "invalidHost": "Ugyldig host-parameter",
+      "invalidBody": "Ugyldigt anmodningsindhold",
       "rateLimit": "For mange forsøg på at oprette notifikationsstrøm, vent venligst før du prøver igen"
     },
     "streams": {
@@ -4542,7 +5187,8 @@
         "invalidUrl": "Ugyldigt URL-format. Indtast en fuld URL som rtsp://host:port/sti",
         "unsupportedScheme": "Ikke-understøttet URL-skema \"{scheme}\". Brug rtsp, rtsps, http, https, rtmp eller udp",
         "blockedDestination": "Denne destination er blokeret af sikkerhedsmæssige årsager",
-        "connectionFailed": "Kunne ikke oprette forbindelse til streamen. Kontrollér, at URL'en er korrekt, og at streamen er tilgængelig"
+        "connectionFailed": "Kunne ikke oprette forbindelse til streamen. Kontrollér, at URL'en er korrekt, og at streamen er tilgængelig",
+        "noAudioTrack": "Streamen har ikke noget lydspor. Kun streams, der indeholder lyd, kan bruges"
       }
     },
     "debug": {
@@ -4580,9 +5226,9 @@
       "waningCrescent": "Aftagende månesegel"
     },
     "birding": {
-      "excellent": "Stille — fremragende til at høre fuglekald",
-      "moderate": "Moderat vind — nogle fuglekald kan være sværere at høre",
-      "poor": "Kraftig vind — fuglekald er usandsynligt at høre"
+      "excellent": "Stille - fremragende til at høre fuglekald",
+      "moderate": "Moderat vind - nogle fuglekald kan være sværere at høre",
+      "poor": "Kraftig vind - fuglekald er usandsynligt at høre"
     }
   },
   "wizard": {
@@ -4636,7 +5282,7 @@
         "rtspUrlPlaceholder": "rtsp://user:password@host:port/stream",
         "rtspUrlHelp": "Indtast URL'en til din RTSP-lydstream",
         "additionalSourcesHint": "Du kan tilføje flere lydkilder senere under Indstillinger.",
-        "configureLater": "Spring over — konfigurér senere"
+        "configureLater": "Spring over - konfigurér senere"
       },
       "detection": {
         "title": "Detekteringsgrænse",
@@ -4688,8 +5334,8 @@
       "title": "Detektionsindstillinger",
       "description": "Konfigurer tærskler for konfidens og sprog til artsklassificering.",
       "confidenceThreshold": {
-        "label": "Confidence Threshold",
-        "helpText": "Minimum confidence score (0.0 - 1.0) required for a detection to be recorded."
+        "label": "Konfidenstærskel",
+        "helpText": "Minimum konfidensværdi (0,0 - 1,0) der kræves for at en detektion registreres."
       },
       "batThreshold": {
         "label": "Flagermus-detekteringsgrænse",
@@ -4721,6 +5367,20 @@
       "locale": {
         "label": "Artssprog",
         "helpText": "Sprog brugt til arternes almindelige navne i brugerfladen."
+      },
+      "secondaryThresholdOverride": {
+        "label": "Override confidence threshold",
+        "helpText": "When enabled, this model uses its own confidence threshold below. When disabled, it follows the main BirdNET confidence threshold."
+      },
+      "secondaryThreshold": {
+        "helpText": "Minimum confidence score (0.01 - 0.99) required for a detection from this model to be recorded.",
+        "followsBirdnet": "Enable the override above to set a custom value. This model currently follows the main BirdNET confidence threshold."
+      },
+      "perchThreshold": {
+        "label": "Perch v2 Confidence Threshold"
+      },
+      "birdnetv3Threshold": {
+        "label": "BirdNET v3.0 Confidence Threshold"
       }
     },
     "rangeFilter": {
@@ -4747,9 +5407,92 @@
       "title": "Avanceret",
       "description": "Behandling og brugerdefineret modelkonfiguration."
     },
+    "downloadSource": {
+      "title": "Downloadkilde",
+      "description": "Hvor modelfiler downloades fra.",
+      "note": "Lad dette felt være tomt, medmindre huggingface.co er blokeret eller langsomt på dit netværk. Miljøvariablen HF_ENDPOINT bruges, når dette felt er tomt, og huggingface.co, når ingen af delene er angivet. En værdi, der ikke er en gyldig http- eller https-adresse, ignoreres, og standarden bruges i stedet.",
+      "endpoint": {
+        "label": "HuggingFace-endpoint",
+        "helpText": "Spejlserver til download af modeller, for eksempel https://hf-mirror.com. Gælder for næste download; genstart er ikke nødvendig.",
+        "validationMessage": "Indtast en fuld adresse, der starter med http:// eller https://, eller lad feltet være tomt."
+      }
+    },
     "gallery": {
       "title": "Modelgalleri",
       "description": "Administrer klassifikatormodeller til fugle- og flagermusdetektion.",
+      "region": {
+        "title": "Modelregion",
+        "modeAuto": "Automatisk",
+        "modeAutoHint": "Vælg den bedste regionale variant ud fra stationsplaceringen",
+        "modeManual": "Manual region select",
+        "modeManualHint": "Choose a region yourself, or the worldwide model",
+        "worldwideTitle": "Worldwide",
+        "worldwideSubtitle": "Every region, all species",
+        "worldwideResourceNote": "Largest model, uses the most RAM and CPU",
+        "selectedBadge": "Selected",
+        "orSpecificRegion": "Or a specific region",
+        "search": "Search regions or countries",
+        "searchNoResults": "No regions match \"{query}\"",
+        "manualPrompt": "Choose a region below, or the worldwide model.",
+        "countriesOverflow": "+{count}",
+        "coreCoverage": "Core coverage:",
+        "partialCoverage": "Partial coverage:",
+        "pinAction": "Fastgør {region}",
+        "switchToAuto": "Skift til automatisk",
+        "loading": "Indlæser regioner...",
+        "loadFailed": "Kunne ikke indlæse regionsdata",
+        "mapUnavailable": "Dækningskort ikke tilgængeligt",
+        "mapAria": "Dækningskort for {region}",
+        "why": {
+          "noLocation": "Automatisk valg kræver en stationsplacering. Indstil den i Hovedindstillinger; den globale model bruges indtil da.",
+          "outsideCoverage": "Din placering er uden for alle regionale modellers dækning, så den globale model bruges.",
+          "ambiguous": "Din placering er tæt på grænsen mellem {region} og {runnerUp}. Automatisk valg bruger {region}; fastgør en af dem for at gøre valget eksplicit.",
+          "resolved": "Registreret region fra din placering: {region}.",
+          "global": "Den globale model bruges altid, uanset stationsplaceringen.",
+          "pinned": "Fastgjort til {region}. Stationsplaceringen påvirker ikke modelvalget.",
+          "pinnedMismatch": "Din placering svarer i øjeblikket til {resolved}.",
+          "pinnedUnknown": "Den fastgjorte region \"{region}\" er ikke tilgængelig i det aktuelle modelkatalog. Modelfamilier falder tilbage på din placering eller den globale model."
+        }
+      },
+      "variants": {
+        "title": "Modelvariant",
+        "recommended": "Anbefalet",
+        "recommendedForHardware": "Bedst til din hardware",
+        "installed": "Installeret",
+        "default": "Standard",
+        "incompatible": "Ikke tilgængelig for din hardware",
+        "showAll": "Vis alle varianter ({count})",
+        "showRegion": "Vis varianter for {region} og din hardware ({count})",
+        "showHardware": "Vis hardwarevarianter ({count})",
+        "showAllRegions": "Vis alle varianter, inklusive andre regioner ({count})",
+        "regionContext": "Regionale varianter vises for {region}, angivet af valget af modelregion ovenfor",
+        "regionContextNone": "Regionale varianter er tilgængelige. Vælg en region i valget af modelregion ovenfor, eller vis alle varianter.",
+        "otherRegions": "Andre regioner",
+        "filterPlaceholder": "Filtrer regioner",
+        "filterAria": "Filtrer regionstilpassede versioner",
+        "filterNoMatch": "Ingen regioner matcher \"{query}\"",
+        "latency": "~{ms} ms",
+        "precisionInfo": "About precision and variants",
+        "precisionHelp": "Precision (FP32, FP16, INT8) trades accuracy for size and speed: FP32 is most accurate, INT8 is smallest and fastest. Recommended is the best match for your detected hardware; Default is the model's standard build."
+      },
+      "actionInProgress": "Vent på, at den aktuelle installation, geninstallation eller fjernelse af modellen fuldføres",
+      "removeSuccess": "Removed {name}",
+      "reasons": {
+        "backendRecommended": "Kører på {backend}, den anbefalede backend til din hardware",
+        "backendSupported": "Kører på {backend}",
+        "regionMatched": "Matchet til din region ({region})",
+        "regionGlobalFallback": "Global model til din placering",
+        "precisionFp16Native": "Halvpræcisionsversion, der passer til din CPU",
+        "precisionFp16GpuPreferred": "Halvpræcisionsversion: halvt så stor download, kører på din GPU",
+        "ramConstrainedFit": "Kvantiseret version tilpasset din tilgængelige hukommelse",
+        "benchmarkMeasured": "Hurtigst på din enhed i udførte benchmarks",
+        "variantLegacy": "Erstattet af en nyere version",
+        "archUnsupported": "Kræver en {required} CPU",
+        "backendMissing": "Kræver en inference backend, som din version ikke kan nå ({required})",
+        "ramInsufficient": "Kræver mindst {requiredMb} MB hukommelse",
+        "hardwareExcluded": "Understøttes ikke på din hardware ({token})",
+        "backendOnnxUnavailable": "Kræver ONNX Runtime, som ikke er tilgængelig på dette system. Docker-images og udgivelsespakker indeholder det; se installationsvejledningen til ONNX Runtime."
+      },
       "tabs": {
         "installed": "Installerede",
         "available": "Tilgængelige"
@@ -4757,7 +5500,6 @@
       "loading": "Indlæser modeller...",
       "retry": "Prøv igen",
       "builtIn": "Indbygget",
-      "builtInDescription": "Indbygget fuglearts-klassifikator fra BirdNET-teamet.",
       "species": "{count} arter",
       "install": "Installer",
       "installing": "Installerer...",
@@ -4802,7 +5544,13 @@
       "errors": {
         "catalogLoadFailed": "Kunne ikke indlæse modelkatalog",
         "installFailed": "Kunne ikke starte modelinstallation",
-        "removeFailed": "Kunne ikke fjerne model"
+        "removeFailed": "Kunne ikke fjerne model",
+        "actionFailed": "Der opstod et problem med {name}",
+        "downloadSourceHint": "Hvis huggingface.co er blokeret eller langsomt på dit netværk, kan du indstille en spejlserver i sektionen Downloadkilde nedenfor.",
+        "goToDownloadSource": "Gå til Downloadkilde",
+        "dismiss": "Afvis",
+        "details": "Details",
+        "removeRetryHint": "To try again, use the Remove button on the model's card."
       },
       "regionLabel": "Region",
       "speciesLabel": "Arter",
@@ -4810,9 +5558,40 @@
       "reinstalling": "Geninstallerer...",
       "reinstallComplete": "Filer verificeret succesfuldt",
       "geomodelBadge": "Inkluderer BirdNET v3.0 geomodel",
-      "onnxRuntimeRequired": "Kræver ONNX Runtime, som ikke er tilgængelig på dette system.",
-      "onnxRuntimeMissing": "ONNX Runtime er ikke tilgængelig. Denne model kan ikke køre.",
-      "unavailable": "Ikke tilgængelig"
+      "preview": {
+        "badge": "Forhåndsvisning",
+        "buildLabel": "{version} · {build}",
+        "cardNotice": "Forhåndsvisning til udviklere, ikke den endelige udgivelse. Dette er en tidlig version til test; resultaterne kan ændre sig inden den stabile version.",
+        "dialogNotice": "Du er ved at installere en forhåndsvisning til udviklere ({build}). Den er fin til at afprøve, men anbefales endnu ikke som din eneste klassifikator."
+      },
+      "entryIncompatible": "Denne model er ikke tilgængelig på dette system.",
+      "regionGlobal": "Global",
+      "hardwareLabel": "Hardware",
+      "hardware": {
+        "gpuNvidia": "GPU (NVIDIA)",
+        "gpuIntel": "GPU (Intel)",
+        "armCpu": "ARM CPU",
+        "amd64Cpu": "AMD64 CPU",
+        "arm64Cpu": "ARM64 CPU",
+        "cpu": "CPU"
+      },
+      "optimize": {
+        "bannerTitle": "{count, plural, one {# model kan køre hurtigere på din hardware} other {# modeller kan køre hurtigere på din hardware}}",
+        "review": "Gennemgå",
+        "dismiss": "Afvis",
+        "badgeTitle": "Et hurtigere build er tilgængeligt til din hardware",
+        "swap": "Optimer",
+        "dialogTitle": "Optimer dine modeller",
+        "installedBuild": "Installed build",
+        "fromTo": "{from} til {to}",
+        "apply": "Anvend",
+        "applyAll": "Anvend alle",
+        "applying": "Anvender...",
+        "applied": "Anvendt",
+        "applyFailed": "Kunne ikke anvende",
+        "upToDate": "Alle dine modeller er allerede optimeret til denne hardware.",
+        "licenseNote": "Udskiftning forbliver inden for den samme model, så licensen ændres ikke."
+      }
     },
     "bird": {
       "title": "Fugleregistrering",
@@ -4824,6 +5603,14 @@
     },
     "dynamicThreshold": {
       "birdOnlyNote": "Dynamisk tærskel gælder kun for fugleklassifikatorer."
+    },
+    "perch": {
+      "title": "Perch v2 Detection",
+      "description": "Set a dedicated confidence threshold for Google Perch v2 detections, independent of the BirdNET threshold."
+    },
+    "birdnetv3": {
+      "title": "BirdNET v3.0 Detection",
+      "description": "Set a dedicated confidence threshold for BirdNET v3.0 detections, independent of the main BirdNET threshold."
     }
   },
   "restart": {
@@ -4836,7 +5623,14 @@
     "bannerTitle": "Genstart påkrævet",
     "bannerMessage": "Konfigurationsændringer kræver en genstart:",
     "bannerAction": "Genstart nu",
-    "restartFailed": "Kunne ikke starte genstart"
+    "restartFailed": "Kunne ikke starte genstart",
+    "reasons": {
+      "webserver": "Webserver / netværksindstillinger",
+      "oauth": "Indstillinger for godkendelsesudbyder",
+      "database": "Databaseindstillinger",
+      "logging": "Logningsindstillinger",
+      "tlsCertificate": "TLS certifikat"
+    }
   },
   "help": {
     "title": "Hjælp og support",
@@ -4901,20 +5695,20 @@
     }
   },
   "health": {
-    "title": "System Health",
-    "running": "Running diagnostics...",
-    "lastRun": "Last run",
+    "title": "Systemhelbred",
+    "running": "Kører diagnostik...",
+    "lastRun": "Sidst kørt",
     "refresh": "Opdater",
-    "exportText": "Copy Report",
+    "exportText": "Kopier rapport",
     "exportJSON": "Download JSON",
-    "copied": "Report copied to clipboard",
-    "duration": "Duration",
+    "copied": "Rapport kopieret til udklipsholder",
+    "duration": "Varighed",
     "summary": {
-      "healthy": "Healthy",
-      "warnings": "Warnings",
-      "critical": "Critical",
-      "skipped": "Skipped",
-      "total": "Total checks"
+      "healthy": "Sundt",
+      "warnings": "Advarsler",
+      "critical": "Kritisk",
+      "skipped": "Sprunget over",
+      "total": "Totale tjek"
     },
     "metricFooter": {
       "allPassing": "Alt OK",
@@ -4927,32 +5721,32 @@
     "diagnostics": "Diagnostik",
     "categories": {
       "system": "System",
-      "audio": "Audio Pipeline",
-      "analysis": "Analysis",
-      "streams": "Audio Streams",
+      "audio": "Lydpipeline",
+      "analysis": "Analyse",
+      "streams": "Lyd-streams",
       "database": "Database",
-      "network": "Network",
-      "config": "Configuration",
+      "network": "Netværk",
+      "config": "Konfiguration",
       "logs": "Logs"
     },
     "status": {
-      "healthy": "Healthy",
-      "warning": "Warning",
-      "critical": "Critical",
-      "unknown": "Unknown",
-      "skipped": "Skipped"
+      "healthy": "Sundt",
+      "warning": "Advarsel",
+      "critical": "Kritisk",
+      "unknown": "Ukendt",
+      "skipped": "Sprunget over"
     },
     "errors": {
-      "title": "Recent Errors",
-      "noErrors": "No recent errors",
-      "fetchFailed": "Failed to load diagnostics"
+      "title": "Nylige fejl",
+      "noErrors": "Ingen nylige fejl",
+      "fetchFailed": "Kunne ikke indlæse diagnostik"
     },
     "export": {
-      "reportTitle": "BirdNET-Go System Health Report",
+      "reportTitle": "BirdNET-Go Systemhelbredsrapport",
       "statusLabel": "Status",
-      "timeLabel": "Time",
-      "durationLabel": "Duration",
-      "checksLabel": "Checks"
+      "timeLabel": "Tid",
+      "durationLabel": "Varighed",
+      "checksLabel": "Tjek"
     },
     "logs": {
       "topErrors": "Hyppigste fejl",
@@ -4965,9 +5759,9 @@
       "label": "Evalueringsvindue",
       "15m": "15m",
       "30m": "30m",
-      "1h": "1h",
-      "6h": "6h",
-      "24h": "24h",
+      "1h": "1t",
+      "6h": "6t",
+      "24h": "24t",
       "7d": "7d"
     },
     "detail": {

@@ -19,6 +19,7 @@ import (
 	"github.com/tphakala/birdnet-go/internal/datastore"
 	"github.com/tphakala/birdnet-go/internal/errors"
 	"github.com/tphakala/birdnet-go/internal/logger"
+	"github.com/tphakala/birdnet-go/internal/observability"
 	"github.com/tphakala/birdnet-go/internal/observability/metrics"
 	"github.com/tphakala/birdnet-go/internal/telemetry"
 )
@@ -114,6 +115,65 @@ func RemoveOverrunTrackers(sourceID string) {
 // lastQueueOverflowReport tracks the last time a queue overflow was reported to Sentry.
 var lastQueueOverflowReport atomic.Int64
 
+// droppedDetectionsTotal counts how many detection results have been dropped
+// because the results queue was full, over the lifetime of the process. The
+// drop itself is unavoidable backpressure on a slow consumer, but the count
+// makes the otherwise-silent data loss quantifiable in the drop log line and
+// telemetry extras so users can tell whether they are losing detections and by
+// how much.
+var droppedDetectionsTotal atomic.Int64
+
+// resultsQueueDropSink bridges results-queue detection drops into the
+// observability health metrics store and event buffer so the loss surfaces on
+// the System Health page. The diagnostics subsystem (owned by the API
+// controller) creates the store; the ResultsQueueDropCheck reads from it. Using
+// the store as the bridge keeps the dependency direction clean: internal/api/v2
+// must not import internal/analysis (import cycle), so drops are pushed here
+// rather than pulled by a provider closure.
+type resultsQueueDropSink struct {
+	store  *observability.HealthMetricsStore
+	events *observability.HealthEventBuffer
+}
+
+// resultsQueueDropHealthSink holds the active health sink, or nil before the
+// diagnostics subsystem is wired (or after it is cleared). Read on the drop
+// path; set at startup.
+var resultsQueueDropHealthSink atomic.Pointer[resultsQueueDropSink]
+
+// SetResultsQueueDropHealthSink wires the diagnostics health store and event
+// buffer so results-queue detection drops surface on the System Health page.
+// A nil store clears the sink, in which case drops are still logged and
+// reported to telemetry. Safe to call from startup wiring; the latest call
+// wins, so a restarted API server repoints drops at its new store.
+func SetResultsQueueDropHealthSink(store *observability.HealthMetricsStore, events *observability.HealthEventBuffer) {
+	if store == nil {
+		resultsQueueDropHealthSink.Store(nil)
+		return
+	}
+	resultsQueueDropHealthSink.Store(&resultsQueueDropSink{store: store, events: events})
+}
+
+// recordResultsQueueDropHealth records a single dropped detection into the
+// diagnostics health store and event buffer when the sink is wired. The event
+// Metric label and the store key prefix share observability.MetricTypeResultsQueueDrops
+// so ResultsQueueDropCheck's event-buffer filter matches, mirroring how the
+// collector tags audio drops.
+func recordResultsQueueDropHealth(source string) {
+	sink := resultsQueueDropHealthSink.Load()
+	if sink == nil {
+		return
+	}
+	sink.store.Record(observability.MetricPrefixResultsQueueDrops+source, 1)
+	if sink.events != nil {
+		sink.events.Add(observability.HealthEvent{
+			Time:   time.Now(),
+			Source: source,
+			Delta:  1,
+			Metric: observability.MetricTypeResultsQueueDrops,
+		})
+	}
+}
+
 // recordBufferOverrun records a buffer overrun event and reports to Sentry
 // when the tumbling window expires with enough accumulated overruns.
 func recordBufferOverrun(tracker *bufferOverrunTracker, elapsed, bufferLen time.Duration) {
@@ -182,6 +242,18 @@ func SetProcessMetrics(myAudioMetrics *metrics.MyAudioMetrics) {
 	processMetrics.CompareAndSwap(nil, myAudioMetrics)
 }
 
+// ProcessRequest carries the per-window audio payload and identifiers for one
+// ProcessData call. ctx, the classifier backend, and the *buffer.Manager stay separate
+// parameters (they are collaborators, not request data); grouping the payload keeps the
+// call within the >3-parameters-use-a-struct convention.
+type ProcessRequest struct {
+	Data            []byte    // raw PCM bytes for this analysis window
+	StartTime       time.Time // wall-clock start of the analysis window
+	AudioCapturedAt time.Time // capture timestamp used for detection alignment
+	Source          string    // audio source ID
+	ModelID         string    // registry model ID to run inference with
+}
+
 // ProcessData processes the given audio data to detect bird species, logs the
 // detected species and optionally saves the audio clip if a bird species is
 // detected above the configured threshold.
@@ -190,7 +262,7 @@ func SetProcessMetrics(myAudioMetrics *metrics.MyAudioMetrics) {
 // bufMgr is the audiocore buffer manager owning the Float32Pool that the
 // 16-bit conversion hot path draws from. Must be non-nil; callers that reach
 // ProcessData without a manager have a plumbing bug.
-func ProcessData(ctx context.Context, bn *classifier.Orchestrator, bufMgr *buffer.Manager, data []byte, startTime, audioCapturedAt time.Time, source, modelID string) error {
+func ProcessData(ctx context.Context, bn classifierBackend, bufMgr *buffer.Manager, req *ProcessRequest) error {
 	if bufMgr == nil {
 		return errors.Newf("buffer manager must not be nil").
 			Component("analysis").
@@ -198,6 +270,21 @@ func ProcessData(ctx context.Context, bn *classifier.Orchestrator, bufMgr *buffe
 			Context("operation", "process_data").
 			Build()
 	}
+	if req == nil {
+		return errors.Newf("process request must not be nil").
+			Component("analysis").
+			Category(errors.CategoryValidation).
+			Context("operation", "process_data").
+			Build()
+	}
+	// Unpack the request payload into the local names the body below uses so the
+	// hot-path logic is unchanged by the parameter-grouping refactor. req is passed by
+	// pointer because the struct is large enough that gocritic flags a by-value copy.
+	data := req.Data
+	startTime := req.StartTime
+	audioCapturedAt := req.AudioCapturedAt
+	source := req.Source
+	modelID := req.ModelID
 	log := GetLogger()
 	// get current time to track processing time
 	predictStart := time.Now()
@@ -288,12 +375,18 @@ func ProcessData(ctx context.Context, bn *classifier.Orchestrator, bufMgr *buffe
 		}
 	}
 
-	// Derive the analysis buffer interval from the model's spec. If
-	// inference exceeds this interval the pipeline falls behind real-time.
-	effectiveBufferDuration := 3 * time.Second / 2 // fallback: BirdNET v2.4
-	if spec, ok := bn.ModelSpecFor(modelID); ok {
-		effectiveBufferDuration = spec.BufferInterval()
+	// Derive the analysis buffer interval from the model's spec and the
+	// effective overlap, so the overrun threshold matches the real cadence
+	// (which now honors birdnet.overlap; the bat model stays fixed at 50%).
+	// If inference exceeds this interval the pipeline falls behind real-time.
+	settings := bn.CurrentSettings()
+	spec, ok := bn.ModelSpecFor(modelID)
+	if !ok {
+		// Defensive fallback for an unregistered model: assume the BirdNET base
+		// clip. BufferInterval depends only on ClipLength and the overlap.
+		spec = classifier.ModelSpec{ClipLength: 3 * time.Second}
 	}
+	effectiveBufferDuration := spec.BufferInterval(classifier.ResolveModelOverlap(modelID, spec, settings))
 
 	if elapsedTime > effectiveBufferDuration {
 		log.Warn("processing time exceeded buffer interval",
@@ -352,29 +445,56 @@ func ProcessData(ctx context.Context, bn *classifier.Orchestrator, bufMgr *buffe
 			pm.RecordAudioQueueOperation(source, "enqueue", "success")
 		}
 	default:
-		log.Error("results queue is full",
-			logger.String("source", source))
-		if pm != nil {
-			pm.RecordAudioQueueOperation(source, "enqueue", "dropped")
-		}
-		// Rate-limit queue overflow telemetry to prevent Sentry floods under sustained backpressure.
-		now := time.Now().Unix()
-		last := lastQueueOverflowReport.Load()
-		if telemetry.IsTelemetryEnabled() && (now-last >= int64(bufferOverrunReportCooldown.Seconds())) {
-			if lastQueueOverflowReport.CompareAndSwap(last, now) {
-				telemetry.FastCaptureMessageWithExtras(
-					"results queue full, detections dropped",
-					sentry.LevelWarning,
-					"analysis",
-					map[string]any{
-						"source":     source,
-						"queue_size": len(classifier.ResultsQueue),
-					},
-				)
-			}
-		}
+		// The consumer is too far behind to accept this result, so it is
+		// dropped. recordResultsQueueDrop makes the loss visible (cumulative
+		// counter + log + rate-limited telemetry) instead of discarding it
+		// silently.
+		recordResultsQueueDrop(source, modelID, pm)
 	}
 	return nil
+}
+
+// recordResultsQueueDrop accounts for a single detection result that could not
+// be enqueued because the results queue was full. It increments the cumulative
+// drop counter, logs the loss with context, records the queue drop metric, and
+// emits rate-limited overflow telemetry. It returns the new cumulative total.
+//
+// Dropping is unavoidable backpressure when the detection consumer cannot keep
+// up, but the loss must not be silent: every drop is a species that was heard
+// and never recorded.
+func recordResultsQueueDrop(source, modelID string, pm *metrics.MyAudioMetrics) int64 {
+	totalDropped := droppedDetectionsTotal.Add(1)
+	GetLogger().Error("results queue is full, detection dropped",
+		logger.String("source", source),
+		logger.String("model_id", modelID),
+		logger.Int("queue_capacity", cap(classifier.ResultsQueue)),
+		logger.Int64("dropped_total", totalDropped))
+	if pm != nil {
+		pm.RecordAudioQueueOperation(source, "enqueue", "dropped")
+	}
+	// Surface the drop on the System Health page (when diagnostics are wired)
+	// so users on constrained hardware can see they are losing detections.
+	recordResultsQueueDropHealth(source)
+	// Rate-limit queue overflow telemetry to prevent Sentry floods under sustained backpressure.
+	now := time.Now().Unix()
+	last := lastQueueOverflowReport.Load()
+	if telemetry.IsTelemetryEnabled() && (now-last >= int64(bufferOverrunReportCooldown.Seconds())) {
+		if lastQueueOverflowReport.CompareAndSwap(last, now) {
+			telemetry.FastCaptureMessageWithExtras(
+				"results queue full, detections dropped",
+				sentry.LevelWarning,
+				"analysis",
+				map[string]any{
+					"source":         source,
+					"model_id":       modelID,
+					"queue_size":     len(classifier.ResultsQueue),
+					"queue_capacity": cap(classifier.ResultsQueue),
+					"dropped_total":  totalDropped,
+				},
+			)
+		}
+	}
+	return totalDropped
 }
 
 func convertToFloat32WithPool(bufMgr *buffer.Manager, sample []byte, bitDepth int) ([][]float32, error) {

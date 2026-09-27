@@ -296,7 +296,7 @@ func TestRouter_DispatchWithResampling(t *testing.T) {
 // TestRouter_ConcurrentDispatch verifies that concurrent dispatch from
 // multiple goroutines does not trigger data races (run with -race).
 // Uses testing/synctest so the drain assertion does not race the per-route
-// drainer goroutine on loaded CI runners (see Forgejo #453).
+// drainer goroutine on loaded CI runners.
 func TestRouter_ConcurrentDispatch(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		router := NewAudioRouter(GetLogger(), nil)
@@ -368,7 +368,7 @@ func TestDrainRoutePanicRecovery(t *testing.T) {
 	err := router.AddRoute("src1", panicConsumer, 48000, 0.0, nil)
 	require.NoError(t, err)
 
-	// Dispatch a frame — the consumer will panic on Write.
+	// Dispatch a frame: the consumer will panic on Write.
 	router.Dispatch(AudioFrame{
 		SourceID:   "src1",
 		Data:       make([]byte, 100),
@@ -381,7 +381,7 @@ func TestDrainRoutePanicRecovery(t *testing.T) {
 	// Wait for drainer to process the frame, recover, and exit.
 	time.Sleep(200 * time.Millisecond)
 
-	// The drainer exited on panic — the route's stopped channel is closed,
+	// The drainer exited on panic: the route's stopped channel is closed,
 	// and subsequent dispatches to its inbox are silently dropped.
 	// Verify the process didn't crash (panic was recovered).
 }
@@ -536,7 +536,7 @@ func TestRouter_GainClipping(t *testing.T) {
 	defer router.Close()
 
 	consumer := newMockConsumer("c1")
-	// +40 dB is 100x linear — will clip a signal near max.
+	// +40 dB is 100x linear: will clip a signal near max.
 	err := router.AddRoute("src-1", consumer, 48000, 40.0, nil)
 	require.NoError(t, err)
 
@@ -659,7 +659,7 @@ func TestRouter_ApplyProcessing_EQOnly(t *testing.T) {
 
 	consumer := newMockConsumer("c1")
 
-	// Build a HighPass at 8000 Hz — should strongly attenuate a 100 Hz tone.
+	// Build a HighPass at 8000 Hz: should strongly attenuate a 100 Hz tone.
 	chain := equalizer.NewFilterChain()
 	hp, err := equalizer.NewHighPass(48000, 8000, 0.707, 2)
 	require.NoError(t, err)
@@ -719,7 +719,7 @@ func TestRouter_ApplyProcessing_EQAndGain(t *testing.T) {
 
 	require.NoError(t, router.AddRoute("src-both", consumer, 48000, 6.0, chain))
 
-	// 100 Hz sine, well below the 15kHz cutoff — should pass through LowPass.
+	// 100 Hz sine, well below the 15kHz cutoff: should pass through LowPass.
 	const numSamples = 480
 	input := make([]byte, numSamples*2)
 	for i := range numSamples {
@@ -922,7 +922,7 @@ func TestRouter_Dispatch_RefFullInboxDrops(t *testing.T) {
 	// Dispatch enough frames to guarantee drops: the drainer consumes at most
 	// one frame before blocking in Write, so 2*cap + 1 leaves no room for
 	// timing-related flakiness.
-	totalFrames := 2*routeInboxCapacity + 1
+	totalFrames := 2*RouteInboxCapacity + 1
 	for range totalFrames {
 		ref := NewFrameRef(func() { released.Add(1) })
 		router.Dispatch(AudioFrame{
@@ -1050,14 +1050,12 @@ type slowConsumer struct {
 
 func newSlowConsumer(id string, delay time.Duration) *slowConsumer {
 	return &slowConsumer{
-		mockConsumer: mockConsumer{
-			id:         id,
-			sampleRate: 48000,
-			bitDepth:   16,
-			channels:   1,
-			frames:     make(chan AudioFrame, 256),
-		},
-		delay: delay,
+		id:         id,
+		sampleRate: 48000,
+		bitDepth:   16,
+		channels:   1,
+		frames:     make(chan AudioFrame, 256),
+		delay:      delay,
 	}
 }
 
@@ -1149,4 +1147,36 @@ func TestRouter_PoolCacheHit(t *testing.T) {
 	assert.NotNil(t, route.float64Pool.Load(), "float64Pool should be cached after frames")
 	assert.NotNil(t, route.byteOutPool.Load(), "byteOutPool should be cached after frames")
 	router.mu.RUnlock()
+}
+
+// TestRouter_QueueDepth verifies that Routes() returns the current inbox
+// occupancy in RouteInfo.QueueDepth for routes with queued frames.
+func TestRouter_QueueDepth(t *testing.T) {
+	t.Parallel()
+
+	router := NewAudioRouter(GetLogger(), nil)
+	t.Cleanup(func() { router.Close() })
+
+	const consumerID = "analysis-consumer"
+	consumer := newBlockingConsumer(consumerID)
+	t.Cleanup(consumer.unblock)
+
+	require.NoError(t, router.AddRoute("src-1", consumer, 48000, 0.0, nil))
+
+	// Push N frames without draining. The drainer goroutine will take at most
+	// one frame (blocking in Write), so inbox occupancy should be N-1 or N.
+	// We overfill slightly so at least RouteInboxCapacity frames sit in the
+	// inbox after the drainer goroutine takes one.
+	const pushFrames = RouteInboxCapacity
+	for range pushFrames {
+		router.Dispatch(testFrame("src-1"))
+	}
+
+	// QueueDepth must be positive: the inbox has frames queued.
+	routes := router.Routes("src-1")
+	require.Len(t, routes, 1)
+	assert.Positive(t, routes[0].QueueDepth,
+		"QueueDepth must be positive when frames are queued in the inbox")
+	assert.LessOrEqual(t, routes[0].QueueDepth, RouteInboxCapacity,
+		"QueueDepth must not exceed inbox capacity")
 }

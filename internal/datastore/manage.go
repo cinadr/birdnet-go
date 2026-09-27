@@ -29,7 +29,7 @@ const (
 // createGormLogger configures and returns a new GORM logger instance.
 func createGormLogger() gormlogger.Interface {
 	// Use our custom GORM logger with metrics support
-	return NewGormLogger(DefaultSlowQueryThreshold, gormlogger.Warn, nil)
+	return NewGormLogger(DefaultSlowQueryThreshold, gormlogger.Warn, nil, "")
 }
 
 // getSQLiteIndexInfo executes PRAGMA index_info for a given SQLite index name,
@@ -326,6 +326,14 @@ func performAutoMigration(db *gorm.DB, debug bool, dbType, dbName string) error 
 	if err := reconcileLegacyUniqueIndexes(db, dbType, dbName, entityModels); err != nil {
 		migrationLogger.Warn("Failed to reconcile legacy unique indexes, continuing",
 			logger.Error(err))
+	}
+
+	// Consolidate per-model dynamic thresholds to per-species before AutoMigrate
+	// creates the new unique(species_name) index, so it finds no duplicates. Runs
+	// after the reconciler (which leaves the composite index alone, being a superset
+	// of the new declared index) and is a no-op on fresh or already-migrated DBs.
+	if err := migrateDynamicThresholdsToPerSpecies(db, migrationLogger); err != nil {
+		return err
 	}
 
 	// Validate and fix schema if needed
@@ -671,8 +679,7 @@ const (
 // driver error with the specified error number. Returns false for non-MySQL errors,
 // making it safe to call regardless of the active database driver.
 func isMySQLError(err error, number uint16) bool {
-	var mysqlErr *gomysql.MySQLError
-	if errors.As(err, &mysqlErr) {
+	if mysqlErr, ok := errors.AsType[*gomysql.MySQLError](err); ok {
 		return mysqlErr.Number == number
 	}
 	return false

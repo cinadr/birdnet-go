@@ -34,7 +34,6 @@
     privacyFilterSettings,
     dogBarkFilterSettings,
     daylightFilterSettings,
-    realtimeSettings,
   } from '$lib/stores/settings';
   import { hasSettingsChanged } from '$lib/utils/settingsChanges';
   import { api, ApiError } from '$lib/utils/api';
@@ -42,10 +41,12 @@
 
   // API response interfaces
   interface SpeciesListResponse {
-    species?: Array<{ label: string }>;
+    species?: Array<{ label: string; commonName?: string; scientificName?: string }>;
   }
-  import { Filter } from '@lucide/svelte';
+  import { Filter, ShieldCheck } from '@lucide/svelte';
   import { loggers } from '$lib/utils/logger';
+  import { normalizeForLookup } from '$lib/utils/speciesNames';
+  import { localizeSpeciesName } from '$lib/utils/speciesDisplay';
 
   const logger = loggers.settings;
 
@@ -57,10 +58,16 @@
   // PERFORMANCE OPTIMIZATION: Reactive settings with proper defaults
   let settings = $derived(
     (() => {
-      const privacyBase = $privacyFilterSettings || {
-        enabled: false,
-        confidence: 0.5,
-        debug: false,
+      const privacySettings = $privacyFilterSettings;
+      const privacyBase = {
+        enabled: privacySettings?.enabled ?? false,
+        confidence: privacySettings?.confidence ?? 0.05,
+        debug: privacySettings?.debug ?? false,
+        vad: {
+          enabled: privacySettings?.vad?.enabled ?? false,
+          threshold: privacySettings?.vad?.threshold ?? 0.35,
+          modelPath: privacySettings?.vad?.modelPath ?? '',
+        },
       };
 
       const dogBarkBase = $dogBarkFilterSettings || {
@@ -145,6 +152,16 @@
     data: [],
   });
 
+  // Normalized stored value -> scientific name, used to localize the displayed
+  // labels while the stored filter values stay canonical (server-locale names).
+  let speciesScientificMap = $state(new Map<string, string>());
+
+  // Resolve a stored filter value to its visitor-locale label. Reactive to the
+  // dictionary store; the stored value itself is never localized.
+  function localizeSpeciesLabel(value: string): string {
+    return localizeSpeciesName(speciesScientificMap.get(normalizeForLookup(value)), value);
+  }
+
   // PERFORMANCE OPTIMIZATION: Load species list with proper state management
   $effect(() => {
     loadSpeciesList();
@@ -157,11 +174,18 @@
     try {
       const data = await api.get<SpeciesListResponse>('/api/v2/range/species/list');
       if (data?.species && Array.isArray(data.species)) {
-        speciesListState.data = data.species.map(
-          (species: { label: string; commonName?: string }) => species.commonName || species.label
-        );
+        const sciMap = new Map<string, string>();
+        speciesListState.data = data.species.map(species => {
+          const value = species.commonName || species.label;
+          if (species.scientificName) {
+            sciMap.set(normalizeForLookup(value), species.scientificName);
+          }
+          return value;
+        });
+        speciesScientificMap = sciMap;
       } else {
         speciesListState.data = [];
+        speciesScientificMap = new Map();
       }
     } catch (error) {
       // Species list loading failure affects form functionality but isn't critical
@@ -175,6 +199,7 @@
       speciesListState.error = t('settings.filters.errors.speciesLoadFailed');
       // Set empty array so form still works, just without suggestions
       speciesListState.data = [];
+      speciesScientificMap = new Map();
     } finally {
       speciesListState.loading = false;
     }
@@ -183,36 +208,55 @@
   // Privacy filter update handlers
   function updatePrivacyEnabled(enabled: boolean) {
     settingsActions.updateSection('realtime', {
-      ...$realtimeSettings,
       privacyFilter: { ...settings.privacy, enabled },
     });
   }
 
   function updatePrivacyConfidence(confidence: number) {
     settingsActions.updateSection('realtime', {
-      ...$realtimeSettings,
       privacyFilter: { ...settings.privacy, confidence },
+    });
+  }
+
+  function updateVADEnabled(enabled: boolean) {
+    settingsActions.updateSection('realtime', {
+      privacyFilter: {
+        ...settings.privacy,
+        vad: {
+          ...settings.privacy.vad,
+          enabled,
+        },
+      },
+    });
+  }
+
+  function updateVADThreshold(threshold: number) {
+    settingsActions.updateSection('realtime', {
+      privacyFilter: {
+        ...settings.privacy,
+        vad: {
+          ...settings.privacy.vad,
+          threshold,
+        },
+      },
     });
   }
 
   // Dog bark filter update handlers
   function updateDogBarkEnabled(enabled: boolean) {
     settingsActions.updateSection('realtime', {
-      ...$realtimeSettings,
       dogBarkFilter: { ...settings.dogBark, enabled },
     });
   }
 
   function updateDogBarkConfidence(confidence: number) {
     settingsActions.updateSection('realtime', {
-      ...$realtimeSettings,
       dogBarkFilter: { ...settings.dogBark, confidence },
     });
   }
 
   function updateDogBarkRemember(remember: number) {
     settingsActions.updateSection('realtime', {
-      ...$realtimeSettings,
       dogBarkFilter: { ...settings.dogBark, remember },
     });
   }
@@ -220,7 +264,6 @@
   // Species change handlers
   function handleDogBarkSpeciesChange(updatedSpecies: string[]) {
     settingsActions.updateSection('realtime', {
-      ...$realtimeSettings,
       dogBarkFilter: { ...settings.dogBark, species: updatedSpecies },
     });
   }
@@ -228,21 +271,18 @@
   // Daylight filter update handlers
   function updateDaylightEnabled(enabled: boolean) {
     settingsActions.updateSection('realtime', {
-      ...$realtimeSettings,
       daylightFilter: { ...settings.daylight, enabled },
     });
   }
 
   function updateDaylightOffset(offset: number) {
     settingsActions.updateSection('realtime', {
-      ...$realtimeSettings,
       daylightFilter: { ...settings.daylight, offset },
     });
   }
 
   function handleDaylightSpeciesChange(updatedSpecies: string[]) {
     settingsActions.updateSection('realtime', {
-      ...$realtimeSettings,
       daylightFilter: { ...settings.daylight, species: updatedSpecies },
     });
   }
@@ -278,18 +318,54 @@
               : t('settings.filters.privacyFiltering.disabled')}
           </span>
           <div class="transition-opacity duration-200" class:opacity-50={!settings.privacy.enabled}>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6">
-              <!-- Confidence Threshold -->
-              <NumberField
-                label={t('settings.filters.privacyFiltering.confidenceLabel')}
-                value={settings.privacy.confidence}
-                onUpdate={updatePrivacyConfidence}
-                min={0}
-                max={1}
-                step={0.01}
-                disabled={!settings.privacy.enabled || store.isLoading || store.isSaving}
-                helpText={t('settings.filters.privacyFiltering.confidenceHelp')}
-              />
+            <div class="space-y-4">
+              <!-- Privacy Guard (Silero VAD) Sub-section -->
+              <div
+                class="space-y-1.5 rounded-lg border border-[var(--border-100)] bg-[var(--surface-50)] p-3"
+              >
+                <Checkbox
+                  checked={settings.privacy.vad.enabled}
+                  disabled={!settings.privacy.enabled || store.isLoading || store.isSaving}
+                  onchange={enabled => updateVADEnabled(enabled)}
+                >
+                  <span
+                    class="inline-flex items-center gap-1.5 text-sm text-[var(--color-base-content)]"
+                  >
+                    <ShieldCheck class="w-4 h-4 shrink-0 text-muted" aria-hidden="true" />
+                    <span>{t('settings.filters.privacyFiltering.vadEnable')}</span>
+                  </span>
+                </Checkbox>
+                <p class="text-xs text-muted pl-6 leading-relaxed">
+                  {t('settings.filters.privacyFiltering.vadHelp')}
+                </p>
+              </div>
+
+              <!-- Threshold configuration: dynamic based on Privacy Guard -->
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+                {#if settings.privacy.vad.enabled}
+                  <NumberField
+                    label={t('settings.filters.privacyFiltering.vadThresholdLabel')}
+                    value={settings.privacy.vad.threshold}
+                    onUpdate={updateVADThreshold}
+                    min={0.01}
+                    max={1}
+                    step={0.01}
+                    disabled={!settings.privacy.enabled || store.isLoading || store.isSaving}
+                    helpText={t('settings.filters.privacyFiltering.vadThresholdHelp')}
+                  />
+                {:else}
+                  <NumberField
+                    label={t('settings.filters.privacyFiltering.confidenceLabel')}
+                    value={settings.privacy.confidence}
+                    onUpdate={updatePrivacyConfidence}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    disabled={!settings.privacy.enabled || store.isLoading || store.isSaving}
+                    helpText={t('settings.filters.privacyFiltering.confidenceHelp')}
+                  />
+                {/if}
+              </div>
             </div>
           </div>
         </fieldset>
@@ -358,6 +434,7 @@
               disabled={!settings.dogBark.enabled || store.isLoading || store.isSaving}
               predictions={speciesListState.data}
               predictionsLoading={speciesListState.loading}
+              localizeLabel={localizeSpeciesLabel}
               listLabel={t('settings.filters.dogBarkSpeciesList')}
               addLabel={t('settings.filters.falsePositivePrevention.addDogBarkSpeciesLabel')}
               addPlaceholder={t('settings.filters.typeSpeciesName')}
@@ -423,6 +500,7 @@
               disabled={!settings.daylight.enabled || store.isLoading || store.isSaving}
               predictions={speciesListState.data}
               predictionsLoading={speciesListState.loading}
+              localizeLabel={localizeSpeciesLabel}
               listLabel={t('settings.filters.daylightFilter.speciesListLabel')}
               addLabel={t('settings.filters.daylightFilter.addSpeciesLabel')}
               addPlaceholder={t('settings.filters.typeSpeciesName')}

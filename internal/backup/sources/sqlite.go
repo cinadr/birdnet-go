@@ -169,12 +169,10 @@ func isMediaError(err error) bool {
 	}
 
 	// Check for specific error types that indicate media issues
-	var pathErr *os.PathError
-	if errors.As(err, &pathErr) {
+	if pathErr, ok := errors.AsType[*os.PathError](err); ok {
 		// Platform-specific error detection
 		if runtime.GOOS == "windows" {
-			var errno syscall.Errno
-			if errors.As(pathErr.Err, &errno) {
+			if errno, ok := errors.AsType[syscall.Errno](pathErr.Err); ok {
 				// Windows error codes from syscall/types_windows.go
 				const (
 					ERROR_NOT_READY      syscall.Errno = 21
@@ -197,8 +195,7 @@ func isMediaError(err error) bool {
 			}
 		} else {
 			// Unix-like systems (Linux, macOS)
-			var errno syscall.Errno
-			if errors.As(pathErr.Err, &errno) {
+			if errno, ok := errors.AsType[syscall.Errno](pathErr.Err); ok {
 				switch errno {
 				case syscall.EIO, // I/O error
 					syscall.ENOSPC, // No space left on device
@@ -376,12 +373,12 @@ func (s *SQLiteSource) validatePageCount(total, sourcePages int) (totalPages, re
 	return total, total, nil
 }
 
-// performBackupSteps executes the backup process in chunks
-func (s *SQLiteSource) performBackupSteps(ctx context.Context, backupConn *sqlite3.SQLiteBackup, total int) error {
-	remaining := total
+// performBackupSteps executes the backup process in chunks until the backup
+// connection reports completion or an error occurs.
+func (s *SQLiteSource) performBackupSteps(ctx context.Context, backupConn *sqlite3.SQLiteBackup) error {
 	const pagesPerStep = 1000
 
-	for remaining > 0 {
+	for {
 		select {
 		case <-ctx.Done():
 			return errors.New(ctx.Err()).
@@ -604,7 +601,7 @@ func (s *SQLiteSource) streamBackupToWriter(ctx context.Context, db *sql.DB, w i
 	s.log.Debug("Validated page count for backup", logger.Int("validated_total_pages", validatedTotal))
 
 	// Perform the backup in chunks
-	if err := s.performBackupSteps(ctx, backupConn, validatedTotal); err != nil {
+	if err := s.performBackupSteps(ctx, backupConn); err != nil {
 		return err
 	}
 

@@ -13,6 +13,7 @@ Shows up to 12 species, ordered by novelty category then detection count.
   import type { DailySpeciesSummary } from '$lib/types/detection.types';
   import { buildSpeciesDetectionUrl } from '$lib/utils/detectionUrls';
   import { buildAppUrl } from '$lib/utils/urlHelpers';
+  import { localizeSpeciesName } from '$lib/utils/speciesDisplay';
   import { speciesTrackingSettings } from '$lib/stores/settings';
   import { confidenceColorClasses } from '$lib/desktop/features/dashboard/utils/confidenceColors';
   import {
@@ -20,7 +21,7 @@ Shows up to 12 species, ordered by novelty category then detection count.
     noveltyCategoryColorVar,
     type NoveltyCategory,
   } from '$lib/desktop/features/dashboard/utils/noveltyCategory';
-  import { AudioLines, CalendarDays, Leaf, Star } from '@lucide/svelte';
+  import { AudioLines, CalendarDays, History, Leaf, Star } from '@lucide/svelte';
 
   interface Props {
     data?: DailySpeciesSummary[];
@@ -47,16 +48,41 @@ Shows up to 12 species, ordered by novelty category then detection count.
     category: NoveltyCategory;
   }
 
-  const categoryRank: Record<NoveltyCategory, number> = { lifetime: 0, year: 1, season: 2 };
+  const categoryRank: Record<NoveltyCategory, number> = {
+    lifetime: 0,
+    year: 1,
+    season: 2,
+    infrequent: 3,
+  };
+
+  // Absence threshold for the infrequent tier; undefined disables it so the
+  // category never activates when species tracking or infrequent tracking is
+  // turned off (matching the gate in DailySummaryCard).
+  const infrequentThresholdDays = $derived(
+    $speciesTrackingSettings?.enabled === true &&
+      $speciesTrackingSettings.infrequentTracking?.enabled === true
+      ? ($speciesTrackingSettings.infrequentTracking.absenceDays ?? 14)
+      : undefined
+  );
 
   const highlights = $derived.by<Highlight[]>(() => {
     const result: Highlight[] = [];
     // Guard against a null payload: the default [] only applies for undefined,
     // and the daily-summary endpoint can return a null body.
     if (!data) return result;
+    // Dedupe by scientific_name (first qualifying row wins): the daily-summary payload can
+    // carry duplicate rows, which a bare scientific_name key would render as two tiles and,
+    // worse, throw each_key_duplicate and white-screen the dashboard (Sentry BIRDNET-GO-2HP).
+    // Consume the key only when a row qualifies, so a non-qualifying duplicate row does not
+    // burn the key and drop a later qualifying row for the same species.
+    const seen = new Set<string>();
     for (const species of data) {
-      const category = resolveNoveltyCategory(species);
-      if (category !== null) result.push({ species, category });
+      if (seen.has(species.scientific_name)) continue;
+      const category = resolveNoveltyCategory(species, { infrequentThresholdDays, isToday });
+      if (category !== null) {
+        seen.add(species.scientific_name);
+        result.push({ species, category });
+      }
     }
     result.sort((a, b) => {
       const rankDiff = categoryRank[a.category] - categoryRank[b.category];
@@ -77,6 +103,8 @@ Shows up to 12 species, ordered by novelty category then detection count.
         return season
           ? t('dashboard.newSpeciesHighlights.categorySeasonNamed', { season })
           : t('dashboard.newSpeciesHighlights.categorySeason');
+      case 'infrequent':
+        return t('dashboard.newSpeciesHighlights.categoryInfrequent');
     }
   }
 
@@ -107,8 +135,10 @@ Shows up to 12 species, ordered by novelty category then detection count.
       <Star class="size-3.5 fill-current" />
     {:else if category === 'year'}
       <CalendarDays class="size-3.5" />
-    {:else}
+    {:else if category === 'season'}
       <Leaf class="size-3.5" />
+    {:else}
+      <History class="size-3.5" />
     {/if}
   </span>
 {/snippet}
@@ -131,8 +161,12 @@ Shows up to 12 species, ordered by novelty category then detection count.
 {:else if highlights.length > 0}
   <Card padding={false} header={cardHeader}>
     <div class="grid grid-cols-1 gap-2 px-4 pb-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <!-- highlights is deduped by scientific_name, so a bare scientific_name key is
+           unique (no each_key_duplicate crash, Sentry BIRDNET-GO-2HP) and stable, and a duplicate
+           daily-summary row collapses to one tile instead of rendering twice. -->
       {#each visibleHighlights as { species, category } (species.scientific_name)}
         {@const percent = confidencePercent(species)}
+        {@const displayName = localizeSpeciesName(species.scientific_name, species.common_name)}
         <a
           href={speciesUrl(species)}
           class="group flex items-center gap-2.5 rounded-lg border border-[var(--color-base-200)] bg-[var(--color-base-100)] p-2.5 shadow-sm transition-shadow hover:shadow-md"
@@ -143,7 +177,7 @@ Shows up to 12 species, ordered by novelty category then detection count.
           {#if showThumbnails}
             <img
               src={thumbnailUrl(species)}
-              alt={species.common_name}
+              alt={displayName}
               loading="lazy"
               onerror={handleBirdImageError}
               class="size-10 shrink-0 rounded-md object-cover"
@@ -157,7 +191,7 @@ Shows up to 12 species, ordered by novelty category then detection count.
                 <span
                   class="truncate text-sm font-medium leading-tight group-hover:text-[var(--color-primary)]"
                 >
-                  {species.common_name}
+                  {displayName}
                 </span>
                 {@render categoryIcon(category, species.current_season)}
               </span>

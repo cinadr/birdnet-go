@@ -23,19 +23,31 @@ type DetectionsMap map[string][]datastore.Results
 // Predict performs inference on a given sample using the classifier backend.
 // Implements ModelInstance.
 func (bn *BirdNET) Predict(ctx context.Context, sample [][]float32) ([]datastore.Results, error) {
-	span, _ := startPredictSpan(ctx, bn.ModelInfo.ID, sample)
+	// Capture the model ID once via the lock-free identity snapshot, reused below, so
+	// this hot path never reads bn.ModelInfo directly (it is written at construction).
+	modelID := bn.ModelID()
+	span, _ := startPredictSpan(ctx, modelID, sample)
 	defer span.Finish()
 
 	settings := bn.currentSettings()
 	start := time.Now()
 
+	// This decoration runs BEFORE bn.mu is taken, so it must not read
+	// bn.primaryPath (written by NewBirdNET at construction). It reads the
+	// RESOLVED path lock-free from the published identity snapshot via
+	// bn.resolvedModelPath(), so after a stale-path recovery it names the file the
+	// instance is actually running rather than settings.BirdNET.ModelPath, which
+	// would name a file this instance is not loaded from. The two decorations after
+	// the lock report the same resolved path via bn.configuredModelPath(), so all
+	// three now agree.
+	//
 	// Guard against empty sample slice. Pre-inference rejections are tagged but
 	// not counted as predictions.
 	if len(sample) == 0 || len(sample[0]) == 0 {
 		span.markErrored(errTypeEmptySample)
 		return nil, errors.Newf("empty audio sample").
 			Category(errors.CategoryValidation).
-			ModelContext(settings.BirdNET.ModelPath, bn.ModelInfo.ID).
+			ModelContext(bn.resolvedModelPath(), modelID).
 			Build()
 	}
 
@@ -48,7 +60,7 @@ func (bn *BirdNET) Predict(ctx context.Context, sample [][]float32) ([]datastore
 		span.markErrored(errTypeClassifierNil)
 		return nil, errors.Newf("classifier backend is not initialized").
 			Category(errors.CategoryModelInit).
-			ModelContext(settings.BirdNET.ModelPath, bn.ModelInfo.ID).
+			ModelContext(bn.configuredModelPath(), modelID).
 			Build()
 	}
 
@@ -58,12 +70,12 @@ func (bn *BirdNET) Predict(ctx context.Context, sample [][]float32) ([]datastore
 	if err != nil {
 		err = errors.New(err).
 			Category(errors.CategoryAudio).
-			ModelContext(settings.BirdNET.ModelPath, bn.ModelInfo.ID).
+			ModelContext(bn.configuredModelPath(), modelID).
 			Context("sample_length", len(sample[0])).
-			Timing("prediction-invoke", time.Since(start)).
+			Timing("prediction-invoke", time.Since(invokeStart)).
 			Build()
 
-		recordPredictionFailure(span, bn.ModelInfo.ID, errTypeInvokeFailed, start, err)
+		recordPredictionFailure(span, modelID, errTypeInvokeFailed, start, err)
 		return nil, err
 	}
 
@@ -72,7 +84,13 @@ func (bn *BirdNET) Predict(ctx context.Context, sample [][]float32) ([]datastore
 
 	// Record model invoke timing separately
 	if m := getMetrics(); m != nil {
-		m.RecordModelInvoke(bn.ModelInfo.ID, invokeDuration.Seconds())
+		m.RecordModelInvoke(modelID, invokeDuration.Seconds())
+	}
+
+	if idx := firstNonFinite(predictions); idx != noNonFiniteScore {
+		err = newNonFiniteScoreError(nonFiniteScore{modelID: modelID, index: idx, count: len(predictions)}, bn.RuntimeInfo)
+		recordPredictionFailure(span, modelID, errTypeNonFiniteLogits, start, err)
+		return nil, err
 	}
 
 	// Use optimized sigmoid function with buffer reuse
@@ -88,7 +106,7 @@ func (bn *BirdNET) Predict(ctx context.Context, sample [][]float32) ([]datastore
 			Timing("prediction-total", time.Since(start)).
 			Build()
 
-		recordPredictionFailure(span, bn.ModelInfo.ID, errTypeLabelMismatch, start, err)
+		recordPredictionFailure(span, modelID, errTypeLabelMismatch, start, err)
 		return nil, err
 	}
 
@@ -116,6 +134,61 @@ func sortResults(results []datastore.Results) {
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Confidence > results[j].Confidence
 	})
+}
+
+// noNonFiniteScore is the index firstNonFinite returns when every score is finite.
+const noNonFiniteScore = -1
+
+// firstNonFinite returns the index of the first NaN or infinite value in
+// scores, or noNonFiniteScore when every value is finite.
+func firstNonFinite(scores []float32) int {
+	for i, v := range scores {
+		if f := float64(v); math.IsNaN(f) || math.IsInf(f, 0) {
+			return i
+		}
+	}
+	return noNonFiniteScore
+}
+
+// ErrNonFiniteScore matches (errors.Is) the error every ModelInstance.Predict
+// returns when its backend produced a NaN or Inf score.
+var ErrNonFiniteScore = errors.NewStd("non-finite classifier output")
+
+// nonFiniteScoreError carries the non-finite score message unchanged (so log and
+// telemetry grouping by message are unaffected) while matching ErrNonFiniteScore.
+// Only the telemetry error_type tag, taken from the wrapped error's type, differs.
+type nonFiniteScoreError string
+
+// Error returns the message.
+func (e nonFiniteScoreError) Error() string { return string(e) }
+
+// Is reports whether target is ErrNonFiniteScore.
+func (e nonFiniteScoreError) Is(target error) bool { return target == ErrNonFiniteScore }
+
+// nonFiniteScore locates the offending value for newNonFiniteScoreError.
+type nonFiniteScore struct {
+	modelID string // registry ID of the classifier that produced the score
+	index   int    // position of the first non-finite value in the backend output
+	count   int    // number of scores the backend returned
+}
+
+// newNonFiniteScoreError builds the error every ModelInstance.Predict returns
+// when its backend produced a NaN or Inf score. A non-finite score is a backend
+// fault, not a prediction: it compares false against every threshold, so left
+// alone it is promoted to a detection instead of being dropped. runtimeInfo is
+// the model's RuntimeInfo method, so the error names the backend, device and
+// precision that produced the value (the OpenVINO f16 GPU path is the known
+// offender). The error matches ErrNonFiniteScore under errors.Is, which is how
+// PredictModel classifies the failure; its message is the plain text above.
+func newNonFiniteScoreError(score nonFiniteScore, runtimeInfo func() (device, backend, precision string)) error {
+	device, backend, precision := runtimeInfo()
+	return errors.New(nonFiniteScoreError(fmt.Sprintf("%s classifier returned a non-finite score (index %d of %d)", score.modelID, score.index, score.count))).
+		Category(errors.CategoryAudioAnalysis).
+		Context("model", score.modelID).
+		Context("backend", backend).
+		Context("device", device).
+		Context("precision", precision).
+		Build()
 }
 
 // pairLabelsAndConfidence pairs labels with their corresponding confidence values.
@@ -214,24 +287,53 @@ func trimResultsToMax(results []datastore.Results, maxResults int) []datastore.R
 
 // getTopKResults returns the top k results without fully sorting the array.
 // Uses a partial sort algorithm that's more efficient than sorting all results.
+// It additionally retains the strongest human and dog vocalization classes even
+// when they rank below k, so the privacy and dog-bark filters downstream still
+// see them (see preserveFilterClasses); the returned slice can therefore hold up
+// to k+2 entries. The first k entries stay in descending-confidence order; any
+// appended filter class is below that minimum and the two appended entries are
+// not ordered relative to each other, so consumers must not assume the tail is
+// confidence-sorted (results[0] and the top-k order are unaffected).
 func getTopKResults(results []datastore.Results, k int) []datastore.Results {
 	if len(results) == 0 || k <= 0 {
 		return []datastore.Results{}
 	}
 
+	// Number of elements the caller will receive.
+	n := min(k, len(results))
+
 	if k >= len(results) {
-		// If k is greater than or equal to the number of results, sort everything
+		// If k is greater than or equal to the number of results, sort everything.
 		sortResults(results)
-		return results
+	} else {
+		// Use partial sort to move the top k elements to the front, then sort
+		// just those k in descending order.
+		partialSort(results, k)
+		sortResults(results[:k])
 	}
 
-	// Use partial sort to find top k elements
-	partialSort(results, k)
+	// Return a freshly-allocated copy so the result never aliases the caller's
+	// backing array. BirdNET.Predict passes a reused per-instance scratch buffer
+	// (bn.resultsBuffer) that the next inference window overwrites in place via
+	// pairLabelsAndConfidenceReuse; without this copy a top-K slice already handed
+	// to classifier.ResultsQueue would be mutated concurrently with the queue
+	// consumer reading it, an unsynchronized read/write data race that can corrupt
+	// queued detections. The Bat and Perch Predict paths pass
+	// freshly-allocated slices, so the copy is redundant-but-harmless there; doing
+	// it unconditionally keeps the ownership contract uniform for every model. n
+	// is small (defaultTopKResults = 10), so the copy is cheap and the upstream
+	// large-buffer reuse optimization stays intact: bn.resultsBuffer remains
+	// internal scratch that never escapes.
+	// Room for the appended filter classes so preserveFilterClasses does not
+	// reallocate when it retains a below-top-K human or dog class.
+	out := make([]datastore.Results, n, n+maxPreservedFilterClasses)
+	copy(out, results[:n])
 
-	// Sort the top k elements in descending order
-	sortResults(results[:k])
-
-	return results[:k]
+	// Retain the human and dog classes the privacy and dog-bark filters depend on
+	// even when they rank below the top-K, so a faint speech or bark prediction is
+	// not hidden from the filters by truncation (issue #4177). results still holds
+	// every prediction (the partial sort reordered but did not drop any).
+	return preserveFilterClasses(out, results)
 }
 
 // partialSort performs a partial sort to move the top k elements to the front.

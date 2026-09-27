@@ -58,6 +58,7 @@ Responsive Breakpoints:
     buildSpeciesHourUrl,
   } from '$lib/utils/detectionUrls';
   import { buildAppUrl } from '$lib/utils/urlHelpers';
+  import { localizeSpeciesName } from '$lib/utils/speciesDisplay';
   import { loggers } from '$lib/utils/logger';
   import { LRUCache } from '$lib/utils/LRUCache';
   import { safeArrayAccess, safeGet } from '$lib/utils/security';
@@ -72,15 +73,16 @@ Responsive Breakpoints:
     getTemperatureSymbol,
     type TemperatureUnit,
   } from '$lib/utils/formatters';
-  import { dashboardSettings } from '$lib/stores/settings';
+  import { dashboardSettings, speciesTrackingSettings } from '$lib/stores/settings';
   import {
     resolveNoveltyCategory,
     noveltyCategoryColorVar,
   } from '$lib/desktop/features/dashboard/utils/noveltyCategory';
-  import { ChevronLeft, ChevronRight, Star, Sunrise, Sunset, XCircle } from '@lucide/svelte';
+  import { ChevronLeft, ChevronRight, History, Star, XCircle } from '@lucide/svelte';
   import { untrack } from 'svelte';
   import AnimatedCounter from './AnimatedCounter.svelte';
   import BirdThumbnailPopup from './BirdThumbnailPopup.svelte';
+  import SunTimeTooltip from './SunTimeTooltip.svelte';
 
   const logger = loggers.ui;
 
@@ -708,6 +710,16 @@ Responsive Breakpoints:
   });
   const isToday = $derived(selectedDate === serverTodayDate);
 
+  // Absence threshold for the infrequent novelty tier; undefined disables it so
+  // the category never activates when species tracking (or its infrequent
+  // sub-toggle) is turned off, matching the gating in NewSpeciesHighlightsCard.
+  const infrequentThresholdDays = $derived(
+    $speciesTrackingSettings?.enabled === true &&
+      $speciesTrackingSettings.infrequentTracking?.enabled === true
+      ? ($speciesTrackingSettings.infrequentTracking.absenceDays ?? 14)
+      : undefined
+  );
+
   // Check for reduced motion preference for performance and accessibility
   const prefersReducedMotion = $derived(
     typeof window !== 'undefined'
@@ -803,17 +815,7 @@ Responsive Breakpoints:
     {@const tIdx = sunTime.indexOf('T')}
     {@const formattedTime = tIdx !== -1 ? sunTime.substring(tIdx + 1, tIdx + 6) : ''}
     {#if formattedTime}
-      <div
-        class="sun-icon-wrapper"
-        title={t(`dashboard.dailySummary.daylight.${sunType}`, { time: formattedTime })}
-      >
-        {#if sunType === 'sunrise'}
-          <Sunrise class="size-3.5 text-orange-700" />
-        {:else}
-          <Sunset class="size-3.5 text-rose-700" />
-        {/if}
-        <span class="sun-tooltip sun-tooltip-{sunType}">{formattedTime}</span>
-      </div>
+      <SunTimeTooltip {sunType} time={formattedTime} />
     {/if}
   {/if}
 {/snippet}
@@ -1058,6 +1060,11 @@ Responsive Breakpoints:
           <!-- Species rows -->
           <div class="flex flex-col" style:gap="var(--grid-gap)">
             {#each sortedData as item, index (`${item.scientific_name}_${index}`)}
+              {@const displayName = localizeSpeciesName(item.scientific_name, item.common_name)}
+              {@const noveltyCat = resolveNoveltyCategory(item, {
+                infrequentThresholdDays,
+                isToday,
+              })}
               <div
                 class="flex items-center species-row"
                 class:new-species={item.isNew && !prefersReducedMotion}
@@ -1079,19 +1086,19 @@ Responsive Breakpoints:
                     <a
                       href={urlBuilders.species(item)}
                       class="species-badge shrink-0"
-                      style:background-color={getSpeciesBadgeColor(item.common_name)}
+                      style:background-color={getSpeciesBadgeColor(item.scientific_name)}
                       title={item.scientific_name}
                     >
-                      {getSpeciesInitials(item.common_name)}
+                      {getSpeciesInitials(displayName)}
                     </a>
                   {/if}
                   <a
                     href={urlBuilders.species(item)}
                     class="text-sm hover:text-[var(--color-primary)] cursor-pointer font-medium leading-tight flex items-center gap-1 overflow-hidden"
-                    title={item.common_name}
+                    title={displayName}
                   >
-                    <span class="truncate flex-1">{item.common_name}</span>
-                    {#if resolveNoveltyCategory(item) === 'lifetime'}
+                    <span class="truncate flex-1">{displayName}</span>
+                    {#if noveltyCat === 'lifetime'}
                       <span
                         class="inline-block shrink-0"
                         style:color={noveltyCategoryColorVar('lifetime')}
@@ -1099,7 +1106,7 @@ Responsive Breakpoints:
                       >
                         <Star class="size-3 fill-current" />
                       </span>
-                    {:else if resolveNoveltyCategory(item) === 'year'}
+                    {:else if noveltyCat === 'year'}
                       <span
                         class="shrink-0"
                         style:color={noveltyCategoryColorVar('year')}
@@ -1107,13 +1114,23 @@ Responsive Breakpoints:
                       >
                         📅
                       </span>
-                    {:else if resolveNoveltyCategory(item) === 'season'}
+                    {:else if noveltyCat === 'season'}
                       <span
                         class="shrink-0"
                         style:color={noveltyCategoryColorVar('season')}
                         title={`First time this ${item.current_season || 'season'} (${item.days_this_season ?? 0} day${(item.days_this_season ?? 0) === 1 ? '' : 's'} ago)`}
                       >
                         🌿
+                      </span>
+                    {:else if noveltyCat === 'infrequent'}
+                      <span
+                        class="inline-block shrink-0"
+                        style:color={noveltyCategoryColorVar('infrequent')}
+                        title={t('dashboard.dailySummary.tooltips.infrequent', {
+                          days: item.days_since_last_seen ?? 0,
+                        })}
+                      >
+                        <History class="size-3" />
                       </span>
                     {/if}
                   </a>
@@ -1731,72 +1748,5 @@ Responsive Breakpoints:
 
   :global([data-theme='light']) .daylight-dusk {
     background-color: rgb(139 92 246 / 0.15); /* violet-500/15 */
-  }
-
-  /* Sun icon wrapper and tooltip styles */
-  .sun-icon-wrapper {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    height: 1.25rem; /* 20px - matches grid-daylight-height */
-    position: relative;
-    cursor: pointer;
-  }
-
-  .sun-tooltip {
-    position: absolute;
-    bottom: 100%;
-    left: 50%;
-    transform: translateX(-50%);
-    margin-bottom: 4px;
-    padding: 2px 6px;
-    font-size: 10px;
-    font-weight: 600;
-    white-space: nowrap;
-    border-radius: 4px;
-    opacity: 0;
-    visibility: hidden;
-    transition:
-      opacity 0.15s ease-in-out,
-      visibility 0.15s ease-in-out;
-    pointer-events: none;
-
-    /* Force a new stacking context to escape sticky header */
-    isolation: isolate;
-    z-index: 1100;
-  }
-
-  .sun-icon-wrapper:hover .sun-tooltip {
-    opacity: 1;
-    visibility: visible;
-  }
-
-  /* Sunrise tooltip - orange theme */
-  .sun-tooltip-sunrise {
-    background-color: #fff7ed; /* orange-50 */
-    color: #c2410c; /* orange-700 */
-    border: 1px solid #fed7aa; /* orange-200 */
-    box-shadow: 0 2px 8px rgb(251 146 60 / 0.25);
-  }
-
-  :global([data-theme='dark']) .sun-tooltip-sunrise {
-    background-color: #431407; /* orange-950 */
-    color: #fdba74; /* orange-300 */
-    border: 1px solid #7c2d12; /* orange-900 */
-  }
-
-  /* Sunset tooltip - rose/pink theme */
-  .sun-tooltip-sunset {
-    background-color: #fff1f2; /* rose-50 */
-    color: #be123c; /* rose-700 */
-    border: 1px solid #fecdd3; /* rose-200 */
-    box-shadow: 0 2px 8px rgb(251 113 133 / 0.25);
-  }
-
-  :global([data-theme='dark']) .sun-tooltip-sunset {
-    background-color: #4c0519; /* rose-950 */
-    color: #fda4af; /* rose-300 */
-    border: 1px solid #881337; /* rose-900 */
   }
 </style>

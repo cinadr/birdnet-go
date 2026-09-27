@@ -14,16 +14,16 @@ import (
 	neturl "net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/tphakala/birdnet-go/internal/alerting"
-	"github.com/tphakala/birdnet-go/internal/audiocore/ffmpeg"
+	"github.com/tphakala/birdnet-go/internal/audiocore/clipenc"
 	"github.com/tphakala/birdnet-go/internal/conf"
 	"github.com/tphakala/birdnet-go/internal/datastore"
 	"github.com/tphakala/birdnet-go/internal/errors"
+	"github.com/tphakala/birdnet-go/internal/httpclient"
 	"github.com/tphakala/birdnet-go/internal/logger"
 	"github.com/tphakala/birdnet-go/internal/notification"
 )
@@ -42,8 +42,22 @@ const (
 	// httpClientTimeout is the default timeout for HTTP requests
 	httpClientTimeout = 45 * time.Second
 
-	// encodingTimeout is the timeout for audio encoding operations
-	encodingTimeout = 30 * time.Second
+	// encodingTimeout bounds the native go-flac encode of a soundscape upload so a
+	// slow host (Raspberry Pi, Home Assistant add-on, tired SD card) cannot hang the
+	// upload. The audionorm loudness measurement is pure in-memory CPU work; only the
+	// encode pass runs under this budget. 60s leaves ample room, and the upload runs
+	// in a background worker, so a slow encode never blocks the analysis pipeline or UI.
+	encodingTimeout = 60 * time.Second
+
+	// http2SendPingTimeout and http2PingTimeout enable HTTP/2 connection health
+	// checks on the upload client. The BirdWeather API sits behind a CDN that
+	// silently drops idle connections; reusing a half-open pooled connection
+	// surfaces as "http2: client connection force closed via ClientConn.Close".
+	// With these set, the transport sends a PING on an idle connection after
+	// http2SendPingTimeout and discards it if no PONG arrives within
+	// http2PingTimeout, so a dead connection is never reused for an upload.
+	http2SendPingTimeout = 15 * time.Second
+	http2PingTimeout     = 5 * time.Second
 
 	// detectionDurationSeconds is the duration added to timestamp for end time
 	detectionDurationSeconds = 3
@@ -189,6 +203,29 @@ type Interface interface {
 	Close()
 }
 
+// newUploadHTTPClient builds the HTTP client used for BirdWeather uploads. It
+// uses a dedicated transport (cloned from http.DefaultTransport so proxy support
+// and dial timeouts are preserved) instead of the shared global transport, and
+// enables HTTP/2 health-check PINGs so a half-open connection dropped by the
+// CDN is detected and discarded rather than reused for an upload (which would
+// fail with "http2: client connection force closed via ClientConn.Close").
+func newUploadHTTPClient() *http.Client {
+	transport := httpclient.CloneDefaultTransport()
+	// The cloned DefaultTransport has ForceAttemptHTTP2 set, so HTTP/2 is
+	// negotiated via ALPN. Give it a dedicated HTTP2Config (stdlib bundled HTTP/2,
+	// Go 1.24+) so the transport sends proactive idle health-check PINGs; this
+	// replaces the deprecated golang.org/x/net/http2.ConfigureTransports path. A
+	// fresh config keeps these timeouts off the shared http.DefaultTransport.
+	transport.HTTP2 = &http.HTTP2Config{
+		SendPingTimeout: http2SendPingTimeout,
+		PingTimeout:     http2PingTimeout,
+	}
+	return &http.Client{
+		Timeout:   httpClientTimeout,
+		Transport: transport,
+	}
+}
+
 // New creates and initializes a new BwClient with the given settings.
 // The HTTP client is configured with httpClientTimeout to prevent hanging requests.
 func New(settings *conf.Settings) (*BwClient, error) {
@@ -201,10 +238,10 @@ func New(settings *conf.Settings) (*BwClient, error) {
 		Accuracy:      settings.Realtime.Birdweather.LocationAccuracy,
 		Latitude:      settings.BirdNET.Latitude,
 		Longitude:     settings.BirdNET.Longitude,
-		HTTPClient:    &http.Client{Timeout: httpClientTimeout},
+		HTTPClient:    newUploadHTTPClient(),
 	}
 
-	// Attach the circuit breaker. Metrics are intentionally nil for now — the
+	// Attach the circuit breaker. Metrics are intentionally nil for now; the
 	// BirdWeather integration is not wired into the notification Prometheus
 	// registry and we want to avoid reaching across package boundaries just to
 	// surface state transitions. The breaker degrades gracefully when metrics
@@ -224,15 +261,18 @@ func New(settings *conf.Settings) (*BwClient, error) {
 func (b *BwClient) RandomizeLocation(radiusMeters float64) (latitude, longitude float64) {
 	log := GetLogger()
 
-	// Create a new local random generator seeded with current Unix time
-	rnd := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano()))) //nolint:gosec // G404: weak randomness acceptable for upload retry jitter, not security-critical
-
 	// Calculate the degree offset using metersPerDegree approximation
 	degreeOffset := radiusMeters / metersPerDegree
 
-	// Generate random offsets within +/- degreeOffset
-	latOffset := (rnd.Float64() - randomCenterOffset) * randomOffsetMultiplier * degreeOffset
-	lonOffset := (rnd.Float64() - randomCenterOffset) * randomOffsetMultiplier * degreeOffset
+	// Generate random offsets within +/- degreeOffset. Use the top-level
+	// math/rand/v2 generator (auto-seeded at startup, goroutine-safe) instead of
+	// seeding a fresh PCG from time.Now() on every call: successive calls within
+	// the same clock tick (coarse on Windows, ~15ms) would seed identically and
+	// produce the same "random" offset, defeating the location-fuzzing privacy
+	// guarantee. math/rand/v2 is not crypto-secure, which is fine for privacy
+	// fuzzing of an already-approximate coordinate.
+	latOffset := (rand.Float64() - randomCenterOffset) * randomOffsetMultiplier * degreeOffset
+	lonOffset := (rand.Float64() - randomCenterOffset) * randomOffsetMultiplier * degreeOffset
 
 	// Apply the offsets to the original coordinates and truncate to 4 decimal places
 	latitude = math.Floor((b.Latitude+latOffset)*coordinatePrecisionFactor) / coordinatePrecisionFactor
@@ -258,8 +298,7 @@ func handleNetworkError(err error, url string, timeout time.Duration, operation 
 			Category(errors.CategoryGeneric).
 			Build()
 	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
+	if netErr, ok := errors.AsType[net.Error](err); ok && netErr.Timeout() {
 		// Create descriptive error message with operation context
 		descriptiveErr := fmt.Errorf("BirdWeather %s timeout: %w", operation, err)
 		log.Warn("Network request timed out",
@@ -273,10 +312,8 @@ func handleNetworkError(err error, url string, timeout time.Duration, operation 
 			Context("operation", operation).
 			Build()
 	}
-	var urlErr *neturl.Error
-	if errors.As(err, &urlErr) {
-		var dnsErr *net.DNSError
-		if errors.As(urlErr.Err, &dnsErr) {
+	if urlErr, ok := errors.AsType[*neturl.Error](err); ok {
+		if _, ok := errors.AsType[*net.DNSError](urlErr.Err); ok {
 			descriptiveErr := fmt.Errorf("BirdWeather %s DNS resolution failed: %w", operation, err)
 			// DNS failures are transient infrastructure issues, not code bugs
 			log.Warn("DNS resolution failed",
@@ -457,126 +494,8 @@ func handleHTTPResponse(resp *http.Response, expectedStatus int, operation, mask
 	return responseBody, nil
 }
 
-// encodeFlacUsingFFmpeg converts PCM data to FLAC format using FFmpeg directly into a bytes buffer.
-// It applies a simple gain adjustment instead of dynamic loudness normalization to avoid pumping effects.
-// This avoids writing temporary files to disk.
-// It accepts a context for timeout/cancellation control and the explicit path to the FFmpeg executable.
-func (b *BwClient) encodeFlacUsingFFmpeg(ctx context.Context, pcmData []byte, ffmpegPath string, settings *conf.Settings) (*bytes.Buffer, error) {
-	log := GetLogger()
-
-	log.Debug("Starting FLAC encoding process")
-	// Add check for empty pcmData
-	if len(pcmData) == 0 {
-		log.Error("FLAC encoding failed: PCM data is empty")
-		return nil, fmt.Errorf("pcmData is empty")
-	}
-
-	// ffmpegPath is now passed directly
-	log.Debug("Using ffmpeg path", logger.String("path", ffmpegPath))
-
-	// --- Pass 1: Analyze Loudness ---
-	// Use the provided context for the analysis
-	log.Debug("Performing loudness analysis (Pass 1)")
-	loudnessStats, err := ffmpeg.AnalyzePCMLoudness(ctx, pcmData, ffmpegPath, conf.SampleRate, conf.BitDepth)
-	if err != nil {
-		// Check if the error is due to context cancellation
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			log.Warn("Loudness analysis cancelled or timed out", logger.Error(err))
-			return nil, err // Propagate context error
-		}
-
-		log.Warn("Loudness analysis (Pass 1) failed, falling back to fixed gain adjustment", logger.Error(err))
-		// Fallback to a conservative fixed gain adjustment
-		// A fixed gain of 15dB is a reasonable middle ground for bird call recordings
-		gainValue := 15.0
-		volumeArgs := fmt.Sprintf("volume=%.1fdB", gainValue)
-		customArgs := []string{
-			"-af", volumeArgs, // Simple gain adjustment
-			"-c:a", "flac",
-			"-f", "flac",
-		}
-
-		// Use the provided context for the fallback export operation
-		log.Debug("Starting fallback FLAC export with fixed gain", logger.Float64("gain_db", gainValue))
-		buffer, err := ffmpeg.ExportAudioToBuffer(ctx, pcmData, ffmpegPath, conf.SampleRate, conf.NumChannels, conf.BitDepth, customArgs)
-		if err != nil {
-			log.Error("Fallback FLAC export with fixed gain failed",
-				logger.Float64("gain_db", gainValue),
-				logger.Error(err))
-			return nil, fmt.Errorf("fallback FLAC export with fixed gain failed: %w", err)
-		}
-		log.Info("Encoded PCM to FLAC using fixed gain (fallback)", logger.Float64("gain_db", gainValue))
-		return buffer, nil
-	}
-
-	log.Debug("Loudness analysis results",
-		logger.String("input_i", loudnessStats.InputI),
-		logger.String("input_lra", loudnessStats.InputLRA),
-		logger.String("input_tp", loudnessStats.InputTP),
-		logger.String("input_thresh", loudnessStats.InputThresh))
-
-	// --- Calculate gain needed to reach target loudness ---
-	inputLUFS := parseDouble(loudnessStats.InputI, -70.0)
-	gainNeeded := targetIntegratedLoudnessLUFS - inputLUFS
-
-	// Apply safety limits to prevent excessive amplification or attenuation
-	maxGain := 30.0 // Maximum gain in dB (absolute value)
-	gainLimited := false
-	if gainNeeded > maxGain {
-		b.logGainLimit(log, "Limiting gain to prevent excessive amplification",
-			"calculated_gain", gainNeeded, "max_gain", maxGain)
-		gainNeeded = maxGain
-		gainLimited = true
-	} else if gainNeeded < -maxGain {
-		b.logGainLimit(log, "Limiting gain to prevent excessive attenuation",
-			"calculated_gain", gainNeeded, "min_gain", -maxGain)
-		gainNeeded = -maxGain
-		gainLimited = true
-	}
-	log.Debug("Calculated gain adjustment",
-		logger.Float64("gain_db", gainNeeded),
-		logger.Float64("target_lufs", targetIntegratedLoudnessLUFS),
-		logger.Float64("measured_lufs", inputLUFS),
-		logger.Bool("limited", gainLimited))
-
-	// --- Pass 2: Apply simple gain adjustment and encode ---
-	log.Debug("Applying gain adjustment and encoding to FLAC (Pass 2)", logger.Float64("gain_db", gainNeeded))
-
-	// Use simple volume filter instead of loudnorm
-	volumeArgs := fmt.Sprintf("volume=%.2fdB", gainNeeded)
-
-	customArgs := []string{
-		"-af", volumeArgs, // Simple gain adjustment filter
-		"-c:a", "flac", // Output codec: FLAC
-		"-f", "flac", // Output format: FLAC
-	}
-
-	// Use the provided context for the final encoding operation
-	buffer, err := ffmpeg.ExportAudioToBuffer(ctx, pcmData, ffmpegPath, conf.SampleRate, conf.NumChannels, conf.BitDepth, customArgs)
-	if err != nil {
-		log.Error("FFmpeg FLAC encoding with gain adjustment failed",
-			logger.Float64("gain_db", gainNeeded),
-			logger.Error(err))
-		return nil, fmt.Errorf("failed to export PCM to FLAC with gain adjustment: %w", err)
-	}
-
-	log.Info("Encoded PCM to FLAC with gain adjustment", logger.Float64("gain_db", gainNeeded))
-
-	// Return the buffer containing the FLAC data
-	return buffer, nil
-}
-
-// parseDouble safely parses a string to float64, returning defaultValue on error.
-func parseDouble(s string, defaultValue float64) float64 {
-	val, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	if err != nil {
-		return defaultValue
-	}
-	return val
-}
-
 // UploadSoundscape uploads a soundscape file to the Birdweather API and returns the soundscape ID if successful.
-// It handles the PCM to WAV conversion, compresses the data, and manages HTTP request creation and response handling safely.
+// It handles the PCM to FLAC conversion and manages HTTP request creation and response handling safely.
 func (b *BwClient) UploadSoundscape(timestamp string, pcmData []byte) (soundscapeID string, err error) {
 	log := GetLogger()
 
@@ -598,8 +517,8 @@ func (b *BwClient) UploadSoundscape(timestamp string, pcmData []byte) (soundscap
 			Build()
 	}
 
-	// Encode PCM data to audio format (FLAC with FFmpeg, or WAV fallback)
-	encodingResult, err := b.encodeAudioForUpload(b.Settings, pcmData, timestamp)
+	// Encode PCM data to FLAC using the native go-flac encoder
+	encodingResult, err := b.encodeAudioForUpload(pcmData, timestamp)
 	if err != nil {
 		return "", errors.New(err).
 			Component("birdweather").
@@ -657,12 +576,12 @@ func (b *BwClient) UploadSoundscape(timestamp string, pcmData []byte) (soundscap
 		if httpErr != nil {
 			// handleNetworkError logs at Warn with classified details
 			// (timeout/DNS/connection), and the caller (Publish) logs the
-			// final outcome — so no extra log.Error here.
+			// final outcome, so no extra log.Error here.
 			return handleNetworkError(httpErr, maskedURL, httpClientTimeout, "soundscape upload")
 		}
 		if resp == nil {
 			// Defensive: Go's http.Client should not return nil resp with nil
-			// err. If it happens, let the caller handle it — don't double-log.
+			// err. If it happens, let the caller handle it; don't double-log.
 			return errors.Newf("received nil response from soundscape upload").
 				Component("birdweather").
 				Category(errors.CategoryNetwork).
@@ -687,7 +606,7 @@ func (b *BwClient) UploadSoundscape(timestamp string, pcmData []byte) (soundscap
 
 		// Validate the response inside the closure so that malformed bodies
 		// (HTML with 201, invalid JSON, success:false payloads) count as
-		// failures against the circuit breaker — otherwise a degraded
+		// failures against the circuit breaker; otherwise a degraded
 		// upstream could silently pass the closure and never trip the
 		// breaker.
 		id, parseErr := parseSoundscapeResponse(body, maskedURL, resp.StatusCode)
@@ -820,7 +739,7 @@ func (b *BwClient) PostDetection(soundscapeID, timestamp, commonName, scientific
 		logger.String("soundscape_id", soundscapeID),
 		logger.String("scientific_name", scientificName))
 	// nonTransientErr carries business-logic errors (e.g. CategoryNotFound
-	// species validation 422s from the detection post — the common case for
+	// species validation 422s from the detection post; the common case for
 	// non-bird species) out of the breaker closure without tripping it.
 	var nonTransientErr error
 	cbErr := b.callWithCircuitBreaker(context.Background(), func(ctx context.Context) error {
@@ -859,8 +778,7 @@ func (b *BwClient) PostDetection(soundscapeID, timestamp, commonName, scientific
 		_, handleErr := handleHTTPResponse(resp, http.StatusCreated, "detection post", maskedDetectionURL)
 		if handleErr != nil {
 			// Add detection-specific context regardless of classification.
-			var enhancedErr *errors.EnhancedError
-			if errors.As(handleErr, &enhancedErr) {
+			if enhancedErr, ok := errors.AsType[*errors.EnhancedError](handleErr); ok {
 				enhancedErr.Context["soundscape_id"] = soundscapeID
 				enhancedErr.Context["scientific_name"] = scientificName
 			}
@@ -966,7 +884,7 @@ func (b *BwClient) Publish(note *datastore.Note, pcmData []byte) (err error) {
 	if err != nil {
 		switch {
 		case isCircuitBreakerOpen(err):
-			// Breaker is open — the upstream BirdWeather API is still considered
+			// Breaker is open; the upstream BirdWeather API is still considered
 			// unhealthy. This is an operational throttling state, not a code bug,
 			// so we log at debug level and skip alerting (which would otherwise
 			// fire once per detection during extended outages).
@@ -1008,7 +926,7 @@ func (b *BwClient) Publish(note *datastore.Note, pcmData []byte) (err error) {
 		switch {
 		case errors.IsNotFound(err):
 			// CategoryNotFound (e.g., invalid species on Birdweather)
-			// Expected — not all BirdNET species exist in BirdWeather. Skip without error.
+			// Expected: not all BirdNET species exist in BirdWeather. Skip without error.
 			log.Debug("Publish skipped: species not recognized by Birdweather",
 				logger.String("soundscape_id", soundscapeID),
 				logger.String("common_name", note.CommonName),
@@ -1016,7 +934,7 @@ func (b *BwClient) Publish(note *datastore.Note, pcmData []byte) (err error) {
 				logger.Error(err))
 			return nil
 		case isCircuitBreakerOpen(err):
-			// Breaker is open — treat as a short-circuited skip. No alerting,
+			// Breaker is open; treat as a short-circuited skip. No alerting,
 			// no Sentry noise (handled by shouldReportToSentry), debug-level log.
 			log.Debug("BirdWeather detection post skipped: circuit breaker open",
 				logger.String("soundscape_id", soundscapeID),
@@ -1064,7 +982,10 @@ func (b *BwClient) Close() {
 
 	log.Info("Closing BirdWeather client")
 	if b.HTTPClient != nil && b.HTTPClient.Transport != nil {
-		// If the transport implements the CloseIdleConnections method, call it
+		// If the transport implements the CloseIdleConnections method, call it.
+		// The upload client owns a dedicated transport (see newUploadHTTPClient),
+		// so this only reclaims this client's idle connections and never touches
+		// the shared http.DefaultTransport pool.
 		type transporter interface {
 			CloseIdleConnections()
 		}
@@ -1072,8 +993,12 @@ func (b *BwClient) Close() {
 			log.Debug("Closing idle HTTP connections")
 			transport.CloseIdleConnections()
 		}
-		// Cancel any in-flight requests by using a new client
-		b.HTTPClient = nil // Allow GC to collect the old client/transport
+		// Deliberately do NOT nil out b.HTTPClient here. In-flight uploads read
+		// b.HTTPClient without holding the processor's bwClientMutex (they
+		// obtained the *BwClient via GetBwClient and released the lock), so a
+		// write here races with those reads and risks a nil dereference. The
+		// client/transport are garbage-collected once the BwClient is dropped
+		// from the processor; CloseIdleConnections already frees pooled sockets.
 	}
 
 	if b.Settings.Realtime.Birdweather.Debug {
@@ -1095,55 +1020,31 @@ type audioEncodingResult struct {
 	ext    string
 }
 
-// encodeAudioForUpload handles the PCM to FLAC encoding using FFmpeg
-// FFmpeg is required as BirdWeather only accepts FLAC format
-func (b *BwClient) encodeAudioForUpload(settings *conf.Settings, pcmData []byte, timestamp string) (*audioEncodingResult, error) {
-	log := GetLogger()
-
-	// Use the validated FFmpeg path from settings (validated at startup)
-	// This avoids redundant exec.LookPath calls on every upload
-	ffmpegPathForExec := settings.Realtime.Audio.FfmpegPath
-	ffmpegAvailable := ffmpegPathForExec != ""
-	log.Debug("Checking FFmpeg availability",
-		logger.String("path", ffmpegPathForExec),
-		logger.Bool("available", ffmpegAvailable))
-
-	if !ffmpegAvailable {
-		log.Error("FFmpeg not available, cannot encode to FLAC for BirdWeather",
-			logger.String("timestamp", timestamp))
-		return nil, fmt.Errorf("FFmpeg is required for BirdWeather uploads (FLAC encoding)")
-	}
-
-	return b.encodeWithFFmpeg(settings, pcmData, ffmpegPathForExec, timestamp)
-}
-
-// encodeWithFFmpeg encodes PCM to FLAC format using FFmpeg
-func (b *BwClient) encodeWithFFmpeg(settings *conf.Settings, pcmData []byte, ffmpegPath, timestamp string) (*audioEncodingResult, error) {
-	log := GetLogger()
-
-	ctx, cancel := context.WithTimeout(context.Background(), encodingTimeout)
-	defer cancel()
-
-	audioBuffer, err := b.encodeFlacUsingFFmpeg(ctx, pcmData, ffmpegPath, settings)
-	if err != nil {
-		log.Error("FLAC encoding failed",
-			logger.String("timestamp", timestamp),
-			logger.Error(err))
-		logFLACEncodingError(err)
-		return nil, fmt.Errorf("FLAC encoding failed: %w", err)
-	}
-	log.Info("Encoded audio to FLAC format", logger.String("timestamp", timestamp))
-	return &audioEncodingResult{buffer: audioBuffer, ext: "flac"}, nil
+// encodeAudioForUpload encodes the PCM soundscape to FLAC for upload using the
+// native go-flac encoder with audionorm EBU R128 loudness normalization. FFmpeg is
+// neither used nor required; BirdWeather's FLAC-only API is served entirely in Go.
+func (b *BwClient) encodeAudioForUpload(pcmData []byte, timestamp string) (*audioEncodingResult, error) {
+	GetLogger().Debug("Encoding BirdWeather upload with native go-flac encoder",
+		logger.String("timestamp", timestamp))
+	return b.encodeWithNativeFLAC(pcmData, timestamp)
 }
 
 // logFLACEncodingError logs the appropriate message for FLAC encoding failures
 func logFLACEncodingError(err error) {
 	log := GetLogger()
 
+	// Both branches name the encoder and carry an operation tag, matching the
+	// success line, so a failed upload is attributable to an encoder the same way
+	// a failed clip export is.
+	fields := []logger.Field{
+		logger.Error(err),
+		logger.String("encoder", clipenc.NativeFLAC),
+		logger.String("operation", "birdweather_soundscape_encode_failed"),
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		log.Warn("FLAC encoding timed out or was cancelled", logger.Error(err))
+		log.Warn("FLAC encoding timed out or was cancelled", fields...)
 	} else {
-		log.Error("Failed to encode/normalize PCM to FLAC", logger.Error(err))
+		log.Error("Failed to encode/normalize PCM to FLAC", fields...)
 	}
 }
 
@@ -1238,8 +1139,7 @@ func trackOperationTiming(errPtr *error, operation string, startTime time.Time, 
 				return
 			}
 			// Add timing context to error
-			var enhancedErr *errors.EnhancedError
-			if errors.As(*errPtr, &enhancedErr) {
+			if enhancedErr, ok := errors.AsType[*errors.EnhancedError](*errPtr); ok {
 				// Initialize Context map if nil to prevent panic
 				if enhancedErr.Context == nil {
 					enhancedErr.Context = make(map[string]any)

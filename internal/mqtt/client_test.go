@@ -4,7 +4,6 @@ package mqtt
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math/rand/v2"
 	"net"
@@ -21,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tphakala/birdnet-go/internal/conf"
+	"github.com/tphakala/birdnet-go/internal/errors"
 	"github.com/tphakala/birdnet-go/internal/logger"
 	"github.com/tphakala/birdnet-go/internal/observability"
 )
@@ -45,7 +45,7 @@ func getBrokerAddress() string {
 	if isLocalBrokerAvailable() {
 		return localTestBroker
 	}
-	return "" // No broker available — use integration tests with testcontainer instead
+	return "" // No broker available: use integration tests with testcontainer instead
 }
 
 // isLocalBrokerAvailable checks if a local MQTT broker is available
@@ -218,10 +218,9 @@ func verifyDNSError(t *testing.T, err error) {
 // verifyNetworkError verifies that the error is either a DNS or net.Error
 func verifyNetworkError(t *testing.T, err error) {
 	t.Helper()
-	var dnsErr *net.DNSError
-	var netErr net.Error
-	//nolint:gocritic // OR condition with different error types - AsType would require two separate calls
-	assert.True(t, errors.As(err, &dnsErr) || errors.As(err, &netErr),
+	_, isDNSErr := errors.AsType[*net.DNSError](err)
+	_, isNetErr := errors.AsType[net.Error](err)
+	assert.True(t, isDNSErr || isNetErr,
 		"Expected either a DNS error or a net.Error, got: %v", err)
 }
 
@@ -638,50 +637,80 @@ func createTestClient(t *testing.T, broker string) (Client, *observability.Metri
 	return client, metrics
 }
 
-// TestIsIPAddress verifies the IP address detection function
-func TestIsIPAddress(t *testing.T) {
+// TestNewClient_LWTTopicUsesStatusTopic verifies that the Last Will topic is
+// built through StatusTopic, so a trailing-slash base topic yields
+// "birdnet/status" and matches the availability topic HA sensors read. LWT and
+// the discovered availability topics must be identical or HA never sees the node
+// go offline.
+func TestNewClient_LWTTopicUsesStatusTopic(t *testing.T) {
+	t.Parallel()
+
+	const base = "birdnet/"
+	testSettings := &conf.Settings{
+		Realtime: conf.RealtimeSettings{
+			MQTT: conf.MQTTSettings{
+				Broker: "tcp://localhost:1883",
+				Topic:  base,
+			},
+		},
+	}
+	testSettings.Main.Name = sanitizeClientID(t.Name())
+	testSettings.Realtime.MQTT.HomeAssistant.Enabled = true
+
+	metrics, err := observability.NewMetrics()
+	require.NoError(t, err, "Failed to create metrics")
+
+	c, err := NewClient(testSettings, metrics)
+	require.NoError(t, err, "Failed to create MQTT client")
+
+	impl, ok := c.(*client)
+	require.True(t, ok, "NewClient must return *client")
+	assert.True(t, impl.config.LWT.Enabled, "LWT must be enabled when HA discovery is on")
+	assert.Equal(t, StatusTopic(base), impl.config.LWT.Topic,
+		"LWT topic must equal StatusTopic(base)")
+	assert.Equal(t, "birdnet/status", impl.config.LWT.Topic,
+		"trailing-slash base must not leave an empty topic level")
+}
+
+// TestExtractBrokerHostname verifies the TLS ServerName hostname extraction
+// across scheme-less and scheme-prefixed broker addresses. Scheme-less
+// host:port addresses previously failed url.Parse with "first path segment in
+// URL cannot contain colon" (or silently yielded an empty hostname).
+func TestExtractBrokerHostname(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
-		name     string
-		input    string
-		expected bool
+		name         string
+		broker       string
+		wantHostname string
+		wantErr      bool
 	}{
-		// IPv4 addresses
-		{"Simple IPv4", "192.168.1.1", true},
-		{"IPv4 with tcp protocol", "tcp://192.168.1.1:1883", true},
-		{"IPv4 with mqtt protocol", "mqtt://10.0.0.1:1883", true},
-		{"IPv4 localhost", "127.0.0.1", true},
-		{"IPv4 with port", "127.0.0.1:1883", true},
-
-		// IPv6 addresses
-		{"Simple IPv6", "::1", true},
-		{"IPv6 localhost with brackets", "[::1]", true},
-		{"IPv6 with port", "[::1]:1883", true},
-		{"IPv6 with tcp protocol", "tcp://[2001:db8::1]:1883", true},
-		{"IPv6 with mqtt protocol", "mqtt://[2001:db8::1]:1883", true},
-		{"IPv6 address only", "2001:db8::1", true},
-		{"IPv6 with brackets", "[2001:db8::1]", true},
-
-		// Hostnames (should return false)
-		{"Simple hostname", "localhost", false},
-		{"Hostname with protocol", "mqtt://localhost:1883", false},
-		{"FQDN", "broker.hivemq.com", false},
-		{"FQDN with port", "test.mosquitto.org:1883", false},
-		{"Subdomain", "mqtt.example.com", false},
-
-		// Invalid inputs (should return false)
-		{"Empty string", "", false},
-		{"Invalid hostname", "not-an-ip", false},
-		{"Invalid IPv4", "256.256.256.256", false},
-		{"Invalid IPv6", "2001:zz::1", false},
-		{"Invalid protocol", "invalid://192.168.1.1", false},
-		{"Malformed IPv6 brackets", "[2001:db8::1", false},
-		{"IPv6 without closing bracket", "[2001:db8::1:1883", false},
+		{"Scheme-less hostname with port", "mybroker:1883", "mybroker", false},
+		{"Scheme-less IPv4 with port", "192.168.1.5:1883", "192.168.1.5", false},
+		{"Scheme-less IPv6 with port", "[::1]:1883", "::1", false},
+		{"Scheme-less bare hostname", "mybroker", "mybroker", false},
+		{"tcp scheme with port", "tcp://mybroker:1883", "mybroker", false},
+		{"ssl scheme with port", "ssl://host:8883", "host", false},
+		{"mqtts scheme with IPv6", "mqtts://[2001:db8::1]:8883", "2001:db8::1", false},
+		{"ws scheme with path", "ws://mybroker/mqtt", "mybroker", false},
+		{"wss scheme with port and path", "wss://mybroker:8883/mqtt", "mybroker", false},
+		{"Malformed bracketed host", "tcp://[malformed", "", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isIPAddress(tt.input)
-			assert.Equal(t, tt.expected, result, "isIPAddress(%q) result mismatch", tt.input)
+			t.Parallel()
+
+			c := &client{config: Config{Broker: tt.broker}}
+			hostname, err := c.extractBrokerHostname()
+			if tt.wantErr {
+				require.Error(t, err, "extractBrokerHostname for %q expected an error", tt.broker)
+				assert.Contains(t, err.Error(), "failed to parse broker URL for TLS config",
+					"error message should describe the TLS parse failure")
+				return
+			}
+			require.NoError(t, err, "extractBrokerHostname for %q unexpected error", tt.broker)
+			assert.Equal(t, tt.wantHostname, hostname, "extractBrokerHostname for %q hostname mismatch", tt.broker)
 		})
 	}
 }
@@ -890,6 +919,19 @@ func TestPerformDNSResolution(t *testing.T) {
 		{
 			name:        "IPv6 address (no DNS needed)",
 			broker:      "tcp://[::1]:1883",
+			expectError: false,
+		},
+		{
+			// Regression: scheme-less IPv4 previously failed url.Parse with
+			// "first path segment in URL cannot contain colon".
+			name:        "Scheme-less IPv4 (no DNS needed)",
+			broker:      "8.8.8.8:1883",
+			expectError: false,
+		},
+		{
+			// Regression: scheme-less IPv6 literal previously failed url.Parse.
+			name:        "Scheme-less IPv6 (no DNS needed)",
+			broker:      "[::1]:1883",
 			expectError: false,
 		},
 		{
@@ -1367,7 +1409,7 @@ func TestHandleReconnectFailureErrorSuppression(t *testing.T) {
 		logger.String("broker", config.Broker),
 		logger.String("client_id", config.ClientID))
 
-	testErr := errors.New("connection refused")
+	testErr := errors.NewStd("connection refused")
 
 	// First failure should set state
 	c.handleReconnectFailure(testLog, testErr)
@@ -1388,7 +1430,7 @@ func TestHandleReconnectFailureErrorSuppression(t *testing.T) {
 	c.mu.RUnlock()
 
 	// Failure with different error should reset suppression state
-	differentErr := errors.New("no route to host")
+	differentErr := errors.NewStd("no route to host")
 	c.handleReconnectFailure(testLog, differentErr)
 
 	c.mu.RLock()
@@ -1563,7 +1605,7 @@ func TestPublishSuppressionWhileDisconnected(t *testing.T) {
 		}
 
 		// Simulate connection loss
-		tc.onConnectionLost(nil, errors.New("connection refused"))
+		tc.onConnectionLost(nil, errors.NewStd("connection refused"))
 
 		tc.mu.RLock()
 		assert.True(t, tc.disconnected, "Should set disconnected flag")

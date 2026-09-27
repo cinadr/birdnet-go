@@ -31,6 +31,8 @@ import (
 	"github.com/tphakala/birdnet-go/internal/mqtt"
 	"github.com/tphakala/birdnet-go/internal/notification"
 	"github.com/tphakala/birdnet-go/internal/observability"
+	"github.com/tphakala/birdnet-go/internal/observability/metrics"
+	"github.com/tphakala/birdnet-go/internal/openfauna"
 	"github.com/tphakala/birdnet-go/internal/privacy"
 	"github.com/tphakala/birdnet-go/internal/securefs"
 	"github.com/tphakala/birdnet-go/internal/spectrogram"
@@ -41,11 +43,6 @@ import (
 var _ PreRendererSubmit = (*spectrogram.PreRenderer)(nil)
 
 // Species identification constants for filtering
-const (
-	speciesDog   = "dog"
-	speciesHuman = "human"
-)
-
 // DefaultFlushInterval is the interval for checking and flushing pending detections
 const DefaultFlushInterval = 1 * time.Second
 
@@ -57,45 +54,46 @@ const MinJobQueueGracePeriod = 500 * time.Millisecond
 
 // Processor represents the main processing unit for audio analysis.
 type Processor struct {
-	Settings             *conf.Settings
-	Ds                   datastore.Interface           // Legacy - to be removed after migration
-	Repo                 datastore.DetectionRepository // New - preferred for detection operations
-	Bn                   *classifier.Orchestrator
-	log                  logger.Logger // Logger inherited from analysis package with "processor" child module
-	BwClient             *birdweather.BwClient
-	bwClientMutex        sync.RWMutex // Mutex to protect BwClient access
-	MqttClient           mqtt.Client
-	mqttMutex            sync.RWMutex // Mutex to protect MQTT client access
-	mqttNotReadyWarnOnce sync.Once    // Ensures the "client not ready" warning logs at most once per process to avoid flood
-	BirdImageCache       *imageprovider.BirdImageCache
-	EventTracker         *EventTracker
-	eventTrackerMu       sync.RWMutex            // Mutex to protect EventTracker access
-	NewSpeciesTracker    *species.SpeciesTracker // Tracks new species detections
-	speciesTrackerMu     sync.RWMutex            // Mutex to protect NewSpeciesTracker access
-	lastSyncAttempt      time.Time               // Last time sync was attempted
-	syncMutex            sync.Mutex              // Mutex to protect sync operations
-	syncInProgress       atomic.Bool             // Flag to prevent overlapping syncs
-	LastDogDetection     map[string]time.Time    // keep track of dog barks per audio source
-	LastHumanDetection   map[string]time.Time    // keep track of human vocal per audio source
-	Metrics              *observability.Metrics
-	DynamicThresholds    map[string]*DynamicThreshold
-	thresholdsMutex      sync.RWMutex        // Mutex to protect access to DynamicThresholds
-	pendingResets        map[string]struct{} // Species names pending reset, protected by thresholdsMutex
-	pendingResetAll      bool                // True if a full reset is pending, protected by thresholdsMutex
-	pendingDetections    map[string]PendingDetection
-	pendingMutex         sync.RWMutex // RWMutex to protect access to pendingDetections (RLock for snapshots)
-	dogDetectionMutex    sync.Mutex
-	detectionMutex       sync.RWMutex // Mutex to protect LastDogDetection and LastHumanDetection maps
-	controlChan          chan string
-	JobQueue             *jobqueue.JobQueue // Queue for managing job retries
-	workerCancel         context.CancelFunc // Function to cancel worker goroutines
-	thresholdsCtx        context.Context    // Context for threshold persistence/cleanup goroutines
-	thresholdsCancel     context.CancelFunc // Function to cancel threshold persistence/cleanup goroutines
-	flusherCtx           context.Context    // Context for pending detections flusher goroutine
-	flusherCancel        context.CancelFunc // Function to cancel flusher goroutine
-	preRenderer          PreRendererSubmit  // Spectrogram pre-renderer for background generation
-	preRendererOnce      sync.Once          // Ensures pre-renderer is initialized only once
-	startOnce            sync.Once          // Ensures Start() is called only once
+	Settings               *conf.Settings
+	Ds                     datastore.Interface           // Legacy - to be removed after migration
+	Repo                   datastore.DetectionRepository // New - preferred for detection operations
+	Bn                     *classifier.Orchestrator
+	log                    logger.Logger // Logger inherited from analysis package with "processor" child module
+	BwClient               *birdweather.BwClient
+	bwClientMutex          sync.RWMutex // Mutex to protect BwClient access
+	MqttClient             mqtt.Client
+	mqttMutex              sync.RWMutex // Mutex to protect MQTT client access
+	mqttNotReadyWarnLogged onceByKey    // Emits the "client not ready" warning at most once per topic to avoid flood
+	BirdImageCache         *imageprovider.BirdImageCache
+	EventTracker           *EventTracker
+	eventTrackerMu         sync.RWMutex              // Mutex to protect EventTracker access
+	NewSpeciesTracker      *species.SpeciesTracker   // Tracks new species detections
+	speciesTrackerMu       sync.RWMutex              // Mutex to protect NewSpeciesTracker access
+	lastSyncAttempt        time.Time                 // Last time sync was attempted
+	syncMutex              sync.Mutex                // Mutex to protect sync operations
+	syncInProgress         atomic.Bool               // Flag to prevent overlapping syncs
+	LastDogDetection       map[string]time.Time      // keep track of dog barks per audio source
+	LastHumanDetection     map[string]HumanDetection // keep track of human vocal per audio source, with the trigger that flagged it
+	Metrics                *observability.Metrics
+	DynamicThresholds      map[string]*DynamicThreshold
+	thresholdsMutex        sync.RWMutex        // Mutex to protect access to DynamicThresholds
+	pendingResets          map[string]struct{} // Species names pending reset, protected by thresholdsMutex
+	pendingResetAll        bool                // True if a full reset is pending, protected by thresholdsMutex
+	pendingDetections      map[string]PendingDetection
+	pendingMutex           sync.RWMutex // RWMutex to protect access to pendingDetections (RLock for snapshots)
+	dogDetectionMutex      sync.Mutex
+	detectionMutex         sync.RWMutex // Mutex to protect LastDogDetection and LastHumanDetection maps
+	vadGate                *vadGate     // Lazily-loaded Silero VAD speech gate for the privacy filter
+	controlChan            chan string
+	JobQueue               *jobqueue.JobQueue // Queue for managing job retries
+	workerCancel           context.CancelFunc // Function to cancel worker goroutines
+	thresholdsCtx          context.Context    // Context for threshold persistence/cleanup goroutines
+	thresholdsCancel       context.CancelFunc // Function to cancel threshold persistence/cleanup goroutines
+	flusherCtx             context.Context    // Context for pending detections flusher goroutine
+	flusherCancel          context.CancelFunc // Function to cancel flusher goroutine
+	preRenderer            PreRendererSubmit  // Spectrogram pre-renderer for background generation
+	preRendererOnce        sync.Once          // Ensures pre-renderer is initialized only once
+	startOnce              sync.Once          // Ensures Start() is called only once
 	// SSE related fields
 	SSEBroadcaster      func(note *datastore.Note, birdImage *imageprovider.BirdImage) error // Function to broadcast detection via SSE
 	sseBroadcasterMutex sync.RWMutex                                                         // Mutex to protect SSE broadcaster access
@@ -118,6 +116,27 @@ type Processor struct {
 	discoveryDebounceMu     sync.Mutex
 	defaultDiscoveryCleanup sync.Once // ensures stale "default" discovery cleanup runs at most once
 
+	// haDiscoveryMu serializes HA discovery publishing and retirement, so a
+	// publish that was already queued cannot interleave with (or undo) a retire.
+	haDiscoveryMu sync.Mutex
+	// haPublishedConfig is the discovery identity (prefix, base topic, node) this
+	// process last published under, or nil when nothing needs retiring. It holds
+	// no per-entity state: retirement recomputes the entities from the registry.
+	// Guarded by haDiscoveryMu.
+	haPublishedConfig *mqtt.DiscoveryConfig
+
+	// haPendingRemovals holds HA entity removals requested by user actions (a
+	// stream deleted or renamed in settings) until the next discovery publish
+	// or retirement performs them. haPendingMu guards it and is never held across
+	// network I/O, so the audio pipeline may queue while holding its own locks.
+	haPendingMu       sync.Mutex
+	haPendingRemovals []haPendingRemoval
+
+	// haLegacyStatusCleared is the pre-fix status topic ("<base>//status" for a
+	// base topic with a trailing slash) this process has already cleared, so it
+	// is cleared once per distinct base. Guarded by haDiscoveryMu.
+	haLegacyStatusCleared string
+
 	// BufferMgr provides access to capture buffers for audio clip extraction.
 	// Set once during pipeline initialization (audio_pipeline_service.go) and never replaced;
 	// no synchronization needed for concurrent reads.
@@ -134,6 +153,15 @@ type Processor struct {
 
 	// Periodic pipeline stats (inference activity per source/model)
 	pipelineStats *PipelineStats
+
+	// Per-model recent-detection cache: a fixed-capacity, most-recent-first feed of
+	// the last lastDetectionCap detections per model, throttled per species so a
+	// continuously singing bird does not flood it. lastDetectionMu guards
+	// lastDetectionCache and every feed it holds. The map and per-model feeds are
+	// lazily initialised in updateLastDetection so zero-value Processors are safe to
+	// use in unit tests without a constructor call.
+	lastDetectionCache map[string]*recentDetectionList
+	lastDetectionMu    sync.RWMutex
 
 	// Extended capture fields
 	extendedCaptureSpecies map[string]bool // Resolved set of scientific names eligible for extended capture
@@ -160,7 +188,7 @@ type Processor struct {
 	// operators get a startup-time error for any broken path already
 	// configured. The map is then consulted from detection goroutines
 	// (read) and extended on-demand (write) when a species that was
-	// added or edited *after* startup first fires — that hot-reload
+	// added or edited *after* startup first fires: that hot-reload
 	// path is why we use sync.Map instead of a plain map + mutex: the
 	// Processor itself is never recreated on settings reload (mutation
 	// in place by ControlMonitor), and concurrent reads from detection
@@ -173,7 +201,7 @@ type Processor struct {
 	// (e.g. the operator fixed permissions or restored a missing file),
 	// the entry is deleted and the action becomes active immediately
 	// without waiting for a process restart. This satisfies the
-	// hot-reload requirement in CLAUDE.md while still suppressing the
+	// hot-reload requirement in AGENTS.md while still suppressing the
 	// per-detection Sentry spam between rechecks.
 	invalidCommandPaths sync.Map
 }
@@ -223,6 +251,18 @@ type PendingDetection struct {
 // merged into a single entry for cross-model consensus evaluation.
 func pendingDetectionKey(sourceID, speciesName string) string {
 	return sourceID + ":" + speciesName
+}
+
+// pendingKeyForDetection builds the pendingDetections map key for a detection,
+// keying on the scientific name rather than the common name. Ingestion already
+// normalized the scientific name to its canonical form (parseAndValidateSpecies),
+// so two models reporting one taxon under different legacy/modern names merge into
+// a single pending entry for cross-model consensus. Keying on the scientific name
+// also fixes a latent bug where two genuinely different species sharing a localized
+// common name were wrongly merged. The empty-scientific-name guard in processResults
+// drops invalid detections before this point.
+func pendingKeyForDetection(sourceID string, det *Detections) string {
+	return pendingDetectionKey(sourceID, strings.ToLower(det.Result.Species.ScientificName))
 }
 
 // suggestLevelForDisabledFilter provides smart recommendations for filter levels
@@ -412,11 +452,11 @@ func initSpeciesTracker(settings *conf.Settings, ds datastore.Interface) *specie
 	}
 
 	tracker := species.NewTrackerFromSettings(ds, &hemisphereAwareTracking)
-	if err := tracker.InitFromDatabase(); err != nil {
-		GetLogger().Error("Failed to initialize species tracker from database, continuing with new detections",
-			logger.Error(err),
-			logger.String("operation", "species_tracker_init"))
-	}
+	// Load historical state in the background so the multi-query database scan
+	// does not block startup (it gates the HTTP server on large databases). The
+	// tracker suppresses new-species status until the load completes, so no
+	// spurious "new species" notifications fire from the not-yet-populated maps.
+	tracker.InitFromDatabaseAsync()
 
 	hemisphere := conf.DetectHemisphere(settings.BirdNET.Latitude)
 	GetLogger().Info("Species tracking enabled",
@@ -458,14 +498,13 @@ func (p *Processor) initDynamicThresholds(settings *conf.Settings) {
 			logger.String("operation", "load_dynamic_thresholds"))
 	}
 
-	p.startThresholdPersistence()
-	p.startThresholdCleanup()
+	p.startThresholdGoroutines()
 }
 
 // New creates a new Processor with the given dependencies.
 // The parentLog parameter should be the analysis package logger, which will be used to create
 // a child logger with ".processor" suffix for hierarchical logging (e.g., "analysis.processor").
-func New(settings *conf.Settings, ds datastore.Interface, bn *classifier.Orchestrator, metrics *observability.Metrics, birdImageCache *imageprovider.BirdImageCache, parentLog logger.Logger) *Processor {
+func New(settings *conf.Settings, ds datastore.Interface, bn *classifier.Orchestrator, obsMetrics *observability.Metrics, birdImageCache *imageprovider.BirdImageCache, parentLog logger.Logger) *Processor {
 	// Create child logger from parent for hierarchical logging
 	var procLog logger.Logger
 	if parentLog != nil {
@@ -486,9 +525,10 @@ func New(settings *conf.Settings, ds datastore.Interface, bn *classifier.Orchest
 			time.Duration(settings.Realtime.Interval)*time.Second,
 			settings.Realtime.Species.Config,
 		),
-		Metrics:            metrics,
+		Metrics:            obsMetrics,
 		LastDogDetection:   make(map[string]time.Time),
-		LastHumanDetection: make(map[string]time.Time),
+		LastHumanDetection: make(map[string]HumanDetection),
+		vadGate:            newVADGate(),
 		DynamicThresholds:  make(map[string]*DynamicThreshold),
 		pendingResets:      make(map[string]struct{}),
 		pendingDetections:  make(map[string]PendingDetection),
@@ -609,12 +649,12 @@ func New(settings *conf.Settings, ds datastore.Interface, bn *classifier.Orchest
 }
 
 // Start launches the background goroutines that process detections.
-// It must be called AFTER BufferMgr and Registry are wired — otherwise
+// It must be called AFTER BufferMgr and Registry are wired: otherwise
 // detections arrive before the buffer manager is available and audio
 // clip export silently fails.
 func (p *Processor) Start() {
 	p.startOnce.Do(func() {
-		GetLogger().Info("Processor.Start() called — BufferMgr and Registry wired, launching detection goroutines",
+		GetLogger().Info("Processor.Start() called: BufferMgr and Registry wired, launching detection goroutines",
 			logger.Bool("buffer_mgr_set", p.BufferMgr != nil),
 			logger.Bool("registry_set", p.Registry() != nil),
 			logger.String("operation", "processor_start"))
@@ -666,6 +706,12 @@ func (p *Processor) processDetections(item classifier.Results) {
 	// uses a consistent, hot-reloadable view of the configuration.
 	settings := p.currentSettings()
 
+	// Run the dedicated Silero VAD speech gate before per-result processing. It
+	// scores the raw chunk independently of what the bird model ranked and, on a
+	// speech hit, records it in LastHumanDetection so the privacy filter discards
+	// this window's detections regardless of the top-K label truncation.
+	p.runVADGate(settings, &item)
+
 	// Detection window sets wait time before a detection is considered final and is flushed.
 	// This represents the duration to wait from NOW (detection creation time) before flushing,
 	// allowing overlapping analyses to accumulate confirmations for false positive filtering.
@@ -690,10 +736,7 @@ func (p *Processor) processDetections(item classifier.Results) {
 				maxConf = r.Confidence
 			}
 		}
-		threshold := float32(settings.BirdNET.Threshold)
-		if item.ModelID == classifier.RegistryIDBat {
-			threshold = float32(settings.Bat.Threshold)
-		}
+		threshold := modelGlobalConfidenceThreshold(settings, item.ModelID)
 		p.pipelineStats.RecordInference(item.Source.ID, item.ModelID, len(item.Results), len(detectionResults), maxConf, threshold)
 	}
 
@@ -706,7 +749,7 @@ func (p *Processor) processDetections(item classifier.Results) {
 		p.pendingMutex.Lock()
 
 		now := time.Now()
-		mapKey := pendingDetectionKey(item.Source.ID, commonName)
+		mapKey := pendingKeyForDetection(item.Source.ID, &det)
 
 		if existing, exists := p.pendingDetections[mapKey]; exists {
 			// Update the existing detection (may be from same or different model)
@@ -777,8 +820,11 @@ func (p *Processor) processDetections(item classifier.Results) {
 			p.applyExtendedCapture(mapKey, now, detectionWindow)
 		}
 
-		// Update the dynamic threshold for this species if enabled
-		p.updateDynamicThreshold(item.ModelID, commonName, confidence)
+		// Note: the dynamic-threshold expiry timer is renewed only from approved,
+		// filter-passing detections above Trigger in LearnFromApprovedDetection
+		// (via processApprovedDetection). Renewing it here from pending detections
+		// above the model base let sub-trigger noise sustain a lowered gate
+		// indefinitely (#4194), so no renewal happens on the pending path.
 
 		// Unlock the mutex to allow other goroutines to access shared resources
 		p.pendingMutex.Unlock()
@@ -805,10 +851,18 @@ func (p *Processor) processResults(settings *conf.Settings, item classifier.Resu
 	// Sync species tracker if needed
 	p.syncSpeciesTrackerIfNeeded()
 
+	// Per-model "Last heard" feed parameters, computed once per chunk: the
+	// per-species throttle (from the model's segment length) and a single shared
+	// timestamp for every prediction in this chunk. ModelRegistry is read-only
+	// after init; an unknown model ID yields a zero clip length and the default
+	// throttle.
+	feedThrottle := detectionThrottle(classifier.ModelRegistry[item.ModelID].Spec.ClipLength)
+	feedTime := time.Now().Add(-detection.DetectionTimeOffset)
+
 	// Process each result in item.Results
 	for _, result := range item.Results {
 		// Parse and validate species information
-		scientificName, commonName, speciesCode, speciesLowercase := p.parseAndValidateSpecies(settings, result, item)
+		scientificName, commonName, speciesCode, speciesLowercase, rawScientificName := p.parseAndValidateSpecies(settings, result, item)
 		// Skip if either scientific or common name is missing (partial/invalid parsing)
 		if scientificName == "" || commonName == "" {
 			if settings.Debug {
@@ -826,20 +880,31 @@ func (p *Processor) processResults(settings *conf.Settings, item classifier.Resu
 
 		// Handle dog and human detection, this sets LastDogDetection and LastHumanDetection which is
 		// later used to discard detection if privacy filter or dog bark filters are enabled in settings.
-		p.handleDogDetection(settings, item, speciesLowercase, result)
-		p.handleHumanDetection(settings, item, speciesLowercase, result)
+		p.handleDogDetection(settings, item, result)
+		p.handleHumanDetection(settings, item, result)
 
 		// Determine confidence threshold and check filters
 		baseThreshold := p.getBaseConfidenceThreshold(settings, commonName, scientificName, item.ModelID)
 
 		// Check if detection should be filtered
 		shouldSkip, _ := p.shouldFilterDetection(settings, result, commonName, scientificName, speciesLowercase, baseThreshold, item.Source.ID, item.ModelID)
+
+		// Record every prediction above the base confidence threshold in the
+		// per-model "Last heard" diagnostic feed, including non-avian classes,
+		// human vocalizations, and out-of-range birds, tagged with whether the
+		// species passes the range filter. This is independent of whether the
+		// detection is saved below (saved detections also clear this bar).
+		if result.Confidence > baseThreshold {
+			inRange := !shouldApplyRangeFilter(item.ModelID, settings) || settings.IsSpeciesIncluded(result.Species)
+			p.updateLastDetection(item.ModelID, commonName, scientificName, float64(result.Confidence), feedTime, inRange, feedThrottle)
+		}
+
 		if shouldSkip {
 			continue
 		}
 
 		// Create the detection
-		det := p.createDetection(settings, item, result, scientificName, commonName, speciesCode)
+		det := p.createDetection(settings, item, result, scientificName, commonName, speciesCode, rawScientificName)
 		detections = append(detections, det)
 	}
 
@@ -908,7 +973,7 @@ func (p *Processor) applyUltrasonicFilter(settings *conf.Settings, item classifi
 // parseAndValidateSpecies parses species information and validates it
 //
 //nolint:gocritic // hugeParam: Pass by value is intentional - avoids pointer dereferencing in hot path
-func (p *Processor) parseAndValidateSpecies(settings *conf.Settings, result datastore.Results, item classifier.Results) (scientificName, commonName, speciesCode, speciesLowercase string) {
+func (p *Processor) parseAndValidateSpecies(settings *conf.Settings, result datastore.Results, item classifier.Results) (scientificName, commonName, speciesCode, speciesLowercase, rawScientificName string) {
 	// Use BirdNET's EnrichResultWithTaxonomy to get species information
 	scientificName, commonName, speciesCode = p.Bn.EnrichResultWithTaxonomy(result.Species)
 
@@ -921,16 +986,30 @@ func (p *Processor) parseAndValidateSpecies(settings *conf.Settings, result data
 				logger.Float32("confidence", result.Confidence),
 				logger.String("operation", "species_format_validation"))
 		}
-		return "", "", "", ""
+		return "", "", "", "", ""
 	}
+
+	// Single ingestion chokepoint for species de-duplication: collapse taxonomic
+	// aliases to the canonical scientific name so the same taxon emitted by different
+	// models is stored under one identity. This runs AFTER the inclusion gate (already
+	// alias-aware via the range filter, PR #3725) and BEFORE the detection is created,
+	// so the canonical name flows into the pending-merge key, storage, and tracker.
+	// rawScientificName preserves the model's original name (empty when no alias applied).
+	scientificName, commonName, speciesCode, rawScientificName = canonicalizeSpecies(p.Bn, scientificName, commonName, speciesCode)
 
 	// Use scientific name as fallback when common name is not available.
 	if commonName == "" {
 		commonName = scientificName
 	}
 
-	// Log placeholder taxonomy codes if using custom model
-	if settings.BirdNET.ModelPath != "" && settings.Debug && speciesCode != "" {
+	// Log placeholder taxonomy codes if a custom model is actually running. Read the
+	// RESOLVED path of the model that produced this detection, not
+	// settings.BirdNET.ModelPath: after a stale-path recovery the configured value can
+	// name a file the instance is not running (or the built-in baseline is running
+	// while config still points at a custom path), so the raw setting would
+	// misclassify which model produced the code. For a v2.4 install item.ModelID is
+	// RegistryIDBirdNETV24, so this is identical to the previous primary read.
+	if p.Bn.ResolvedModelPathForID(item.ModelID) != "" && settings.Debug && speciesCode != "" {
 		if len(speciesCode) == 8 && (speciesCode[:2] == "XX" || (speciesCode[0] >= 'A' && speciesCode[0] <= 'Z' && speciesCode[1] >= 'A' && speciesCode[1] <= 'Z')) {
 			GetLogger().Debug("using placeholder taxonomy code",
 				logger.String("taxonomy_code", speciesCode),
@@ -950,27 +1029,67 @@ func (p *Processor) parseAndValidateSpecies(settings *conf.Settings, result data
 }
 
 // shouldApplyRangeFilter returns true if the given model should have its
-// detections filtered by the geographic range filter.
-// BirdNET (any version), Perch, and unknown models are filtered. Perch returns
-// scientific-name labels, and the included-species set stores scientific names
-// for O(1) lookup, so the normal range list applies even when the active range
-// model is the embedded BirdNET geomodel rather than v3.
-// Bat/BSG: never filtered (independent species sets, no geomodel coverage).
+// detections filtered by the geographic range filter. The decision is a registry
+// capability, not a display-name check: BirdNET (any version) and Perch participate
+// (their label spaces are range-filter compatible), while Bat and BSG classify their
+// own label spaces and never participate. An unknown or custom model ID does NOT
+// participate: its label space is arbitrary, and unregistered IDs never reach a live
+// detection anyway (LoadModel rejects them), so this only pins the intended semantics.
+// Perch returns scientific-name labels, and the included-species set stores
+// scientific names for O(1) lookup, so the normal range list applies even when the
+// active range model is the embedded BirdNET geomodel rather than v3.
 func shouldApplyRangeFilter(modelID string, settings *conf.Settings) bool {
 	if settings == nil || !settings.BirdNET.LocationConfigured {
 		return false
 	}
-	mInfo := classifier.DetectionModelInfoForID(modelID)
-	if mInfo.Name == detection.DefaultModelName || mInfo.Name == classifier.DetectionNamePerch {
-		return true
-	}
-	return false
+	return classifier.ParticipatesInRangeFilter(modelID)
+}
+
+// nonFiniteConfidenceWarned guards the once-per-(model, source) warning for
+// non-finite confidences in shouldFilterDetection. Keyed on both so a second
+// broken backend or source still announces itself.
+//
+//nolint:gochecknoglobals // log-flood guard, see onceByKey
+var nonFiniteConfidenceWarned onceByKey
+
+// isFiniteConfidence reports whether c is a usable score: not NaN and not Inf.
+func isFiniteConfidence(c float32) bool {
+	f := float64(c)
+	return !math.IsNaN(f) && !math.IsInf(f, 0)
 }
 
 // shouldFilterDetection checks if a detection should be filtered out
 func (p *Processor) shouldFilterDetection(settings *conf.Settings, result datastore.Results, commonName, scientificName, speciesLowercase string, baseThreshold float32, source, modelID string) (shouldFilter bool, confidenceThreshold float32) {
-	// Check human detection privacy filter
-	if strings.Contains(strings.ToLower(commonName), speciesHuman) && result.Confidence > baseThreshold {
+	// A non-finite confidence (NaN or Inf) is a classifier fault, not a score. NaN
+	// compares false against every threshold, so the "<= threshold" gate below
+	// would let it through and it would be saved as a detection, with a "NaNp"
+	// confidence token in the clip name. Drop it first, ahead of the privacy and
+	// exclusion filters, so every non-finite value reaches the diagnostic below
+	// no matter which label it landed on. It is logged once per model and source
+	// at WARN (the fault repeats every window while the backend is broken, so a
+	// per-hit line would flood the log) and per hit at DEBUG.
+	if !isFiniteConfidence(result.Confidence) {
+		nonFiniteConfidenceWarned.do(modelID+"|"+source, func() {
+			GetLogger().Warn("Classifier returned a non-finite confidence; dropping such detections",
+				logger.String("species", result.Species),
+				logger.String("source", p.getDisplayNameForSource(source)),
+				logger.String("model_id", modelID),
+				logger.String("operation", "confidence_filter"))
+		})
+		if settings.Debug {
+			GetLogger().Debug("Detection filtered out due to non-finite confidence",
+				logger.String("species", result.Species),
+				logger.Float32("confidence", result.Confidence),
+				logger.String("source", p.getDisplayNameForSource(source)),
+				logger.String("model_id", modelID),
+				logger.String("operation", "confidence_filter"))
+		}
+		return true, 0
+	}
+
+	// Check human detection privacy filter. Match the raw label so Perch v2's
+	// FSD50K human classes are caught too, not just BirdNET's "Human *" classes.
+	if isHumanVocalization(result.Species) && result.Confidence > baseThreshold {
 		return true, 0 // Filter out human detections for privacy
 	}
 
@@ -996,7 +1115,7 @@ func (p *Processor) shouldFilterDetection(settings *conf.Settings, result datast
 		// Use lookupSpeciesConfig to support both common name and scientific name lookups
 		config, exists := lookupSpeciesConfig(settings.Realtime.Species.Config, commonName, scientificName)
 		isCustomThreshold := exists && config.Threshold > 0
-		confidenceThreshold = p.getAdjustedConfidenceThreshold(modelID, speciesLowercase, baseThreshold, isCustomThreshold)
+		confidenceThreshold = p.getAdjustedConfidenceThreshold(speciesLowercase, baseThreshold, isCustomThreshold)
 	} else {
 		confidenceThreshold = baseThreshold
 	}
@@ -1033,8 +1152,16 @@ func (p *Processor) shouldFilterDetection(settings *conf.Settings, result datast
 // in the exclude list. Matching is case-insensitive and supports either name form, consistent
 // with the range filter's matchesSpecies logic (see birdnet/range_filter.go).
 func isSpeciesExcluded(commonName, scientificName string, excludeList []string) bool {
+	// Canonicalize the detection's scientific name once so an exclude entry the user
+	// keyed on a legacy/alias scientific name still matches a detection that now
+	// carries the canonical name (and vice versa). CanonicalName is identity for
+	// non-aliased names, so non-reclassified species behave exactly as before.
+	canonicalSci := openfauna.CanonicalName(scientificName)
 	for _, excluded := range excludeList {
-		if strings.EqualFold(commonName, excluded) || strings.EqualFold(scientificName, excluded) {
+		if strings.EqualFold(commonName, excluded) {
+			return true
+		}
+		if scientificName != "" && strings.EqualFold(canonicalSci, openfauna.CanonicalName(excluded)) {
 			return true
 		}
 	}
@@ -1044,18 +1171,13 @@ func isSpeciesExcluded(commonName, scientificName string, excludeList []string) 
 // createDetection creates a detection object with all necessary information
 //
 //nolint:gocritic // hugeParam: Pass by value is intentional - avoids pointer dereferencing in hot path
-func (p *Processor) createDetection(settings *conf.Settings, item classifier.Results, result datastore.Results, scientificName, commonName, speciesCode string) Detections {
-	// Create file name for audio clip
-	clipName := p.generateClipName(settings, scientificName, result.Confidence)
-
-	// Bat models at high sample rates need WAV when the configured format
-	// (MP3/Opus/AAC) cannot carry rates above 48kHz. Override the extension
-	// now so the database stores the same filename the export will write.
-	mInfo := classifier.DetectionModelInfoForID(item.ModelID)
-	sourceRate := p.resolveAudioSource(item.Source).SampleRate
-	if needsBatFormatFallback(mInfo.Name, mInfo.Version, sourceRate, settings.Realtime.Audio.Export.Type) {
-		clipName = replaceExtension(clipName, ".wav")
-	}
+func (p *Processor) createDetection(settings *conf.Settings, item classifier.Results, result datastore.Results, scientificName, commonName, speciesCode, rawScientificName string) Detections {
+	// Create file name for audio clip. When audio export is disabled the clip
+	// name is left empty so it stays a truthful per-detection signal: no file
+	// is or will be written, so nothing must reference one. The media API and
+	// the UI gate on a non-empty ClipName, and no SaveAudioAction is scheduled
+	// when export is off, so there is no async-export race to preserve here.
+	clipName := p.resolveClipName(settings, &item, scientificName, result.Confidence)
 
 	// Get capture length and pre-capture length for detection end time calculation
 	captureLength := time.Duration(settings.Realtime.Audio.Export.Length) * time.Second
@@ -1076,11 +1198,12 @@ func (p *Processor) createDetection(settings *conf.Settings, item classifier.Res
 	detectionResult := p.createDetectionResult(settings,
 		detectionTime,
 		beginTime, endTime,
-		scientificName, commonName, speciesCode,
+		scientificName, commonName, speciesCode, rawScientificName,
 		float64(result.Confidence),
 		item.Source, clipName,
 		item.ElapsedTime, occurrence,
-		item.ModelID)
+		item.ModelID,
+		result.Species)
 
 	// Convert additional results from datastore.Results to detection.AdditionalResult.
 	// Exclude the primary species since it's already stored as Detection.LabelID.
@@ -1110,11 +1233,12 @@ func (p *Processor) createDetection(settings *conf.Settings, item classifier.Res
 func (p *Processor) createDetectionResult(settings *conf.Settings,
 	detectionTime time.Time,
 	beginTime, endTime time.Time,
-	scientificName, commonName, speciesCode string,
+	scientificName, commonName, speciesCode, rawScientificName string,
 	confidence float64,
 	source datastore.AudioSource, clipName string,
 	elapsedTime time.Duration, occurrence float64,
-	modelID string) detection.Result {
+	modelID string,
+	rawLabel string) detection.Result {
 
 	// Resolve audio source info from registry
 	audioSource := p.resolveAudioSource(source)
@@ -1126,19 +1250,21 @@ func (p *Processor) createDetectionResult(settings *conf.Settings,
 		BeginTime:   beginTime,
 		EndTime:     endTime,
 		Species: detection.Species{
-			ScientificName: scientificName,
-			CommonName:     commonName,
-			Code:           speciesCode,
+			ScientificName:    scientificName,
+			CommonName:        commonName,
+			Code:              speciesCode,
+			RawScientificName: rawScientificName,
 		},
 		Confidence:     math.Round(confidence*100) / 100,
 		Latitude:       settings.BirdNET.Latitude,
 		Longitude:      settings.BirdNET.Longitude,
-		Threshold:      settings.BirdNET.Threshold,
+		Threshold:      float64(modelGlobalConfidenceThreshold(settings, modelID)),
 		Sensitivity:    settings.BirdNET.Sensitivity,
 		ClipName:       clipName,
 		ProcessingTime: elapsedTime,
 		Occurrence:     math.Max(0.0, math.Min(1.0, occurrence)),
 		Model:          classifier.DetectionModelInfoForID(modelID),
+		RawLabel:       rawLabel,
 	}
 }
 
@@ -1190,8 +1316,20 @@ func convertToAdditionalResults(results []datastore.Results, primaryScientificNa
 	additional := make([]detection.AdditionalResult, 0, len(results))
 	seen := make(map[string]int, len(results)) // scientificName → index in additional
 	for _, r := range results {
+		// A non-finite confidence never reaches the primary detection (see
+		// shouldFilterDetection) and must not ride along as an additional result
+		// either: it would be persisted as NULL on SQLite and rejected by MySQL,
+		// failing the whole save.
+		if !isFiniteConfidence(r.Confidence) {
+			continue
+		}
 		sp := detection.ParseSpeciesString(r.Species)
-		if sp.ScientificName == primaryScientificName {
+		// Canonicalize the candidate's scientific name so the primary species is
+		// excluded even when this prediction carries it under a legacy/alias name.
+		// primaryScientificName is the canonical name from parseAndValidateSpecies;
+		// without this the aliased primary would leak into the additional results under
+		// its legacy name and the same taxon would be stored twice for one detection.
+		if openfauna.CanonicalName(sp.ScientificName) == primaryScientificName {
 			continue
 		}
 		if idx, exists := seen[sp.ScientificName]; exists {
@@ -1200,6 +1338,7 @@ func convertToAdditionalResults(results []datastore.Results, primaryScientificNa
 				additional[idx] = detection.AdditionalResult{
 					Species:    sp,
 					Confidence: float64(r.Confidence),
+					RawLabel:   r.Species,
 				}
 			}
 			continue
@@ -1208,6 +1347,7 @@ func convertToAdditionalResults(results []datastore.Results, primaryScientificNa
 		additional = append(additional, detection.AdditionalResult{
 			Species:    sp,
 			Confidence: float64(r.Confidence),
+			RawLabel:   r.Species,
 		})
 	}
 	return additional
@@ -1244,8 +1384,8 @@ func (p *Processor) syncSpeciesTrackerIfNeeded() {
 // handleDogDetection handles the detection of dog barks and updates the last detection timestamp.
 //
 //nolint:gocritic // hugeParam: Pass by value is intentional - avoids pointer dereferencing in hot path
-func (p *Processor) handleDogDetection(settings *conf.Settings, item classifier.Results, speciesLowercase string, result datastore.Results) {
-	if settings.Realtime.DogBarkFilter.Enabled && strings.Contains(speciesLowercase, speciesDog) &&
+func (p *Processor) handleDogDetection(settings *conf.Settings, item classifier.Results, result datastore.Results) {
+	if settings.Realtime.DogBarkFilter.Enabled && isDogDetection(result.Species) &&
 		result.Confidence > settings.Realtime.DogBarkFilter.Confidence {
 		GetLogger().Info("dog detection filtered",
 			logger.Float32("confidence", result.Confidence),
@@ -1261,9 +1401,9 @@ func (p *Processor) handleDogDetection(settings *conf.Settings, item classifier.
 // handleHumanDetection handles the detection of human vocalizations and updates the last detection timestamp.
 //
 //nolint:gocritic // hugeParam: Pass by value is intentional - avoids pointer dereferencing in hot path
-func (p *Processor) handleHumanDetection(settings *conf.Settings, item classifier.Results, speciesLowercase string, result datastore.Results) {
+func (p *Processor) handleHumanDetection(settings *conf.Settings, item classifier.Results, result datastore.Results) {
 	// only check this if privacy filter is enabled
-	if settings.Realtime.PrivacyFilter.Enabled && strings.Contains(speciesLowercase, "human ") &&
+	if settings.Realtime.PrivacyFilter.Enabled && isHumanVocalization(result.Species) &&
 		result.Confidence > settings.Realtime.PrivacyFilter.Confidence {
 		GetLogger().Info("human detection filtered",
 			logger.Float32("confidence", result.Confidence),
@@ -1273,15 +1413,15 @@ func (p *Processor) handleHumanDetection(settings *conf.Settings, item classifie
 		// put human detection timestamp into LastHumanDetection map. This is used to discard
 		// bird detections if a human vocalization is detected after the first detection
 		p.detectionMutex.Lock()
-		p.LastHumanDetection[item.Source.ID] = item.StartTime
+		p.LastHumanDetection[item.Source.ID] = HumanDetection{Time: item.StartTime, Trigger: metrics.TriggerLabel}
 		p.detectionMutex.Unlock()
 	}
 }
 
 // getBaseConfidenceThreshold retrieves the confidence threshold for a species, using custom or global thresholds.
 // It supports lookup by both common name and scientific name for consistency with include/exclude matching.
-// The modelID parameter selects which global threshold to use when no per-species config exists:
-// bat models use settings.Bat.Threshold, all others use settings.BirdNET.Threshold.
+// The modelID parameter selects which global threshold to use when no per-species config exists;
+// see modelGlobalConfidenceThreshold for the per-model selection rules.
 func (p *Processor) getBaseConfidenceThreshold(settings *conf.Settings, commonName, scientificName, modelID string) float32 {
 	// Check if species has a custom threshold using both common and scientific name lookup
 	if config, exists := lookupSpeciesConfig(settings.Realtime.Species.Config, commonName, scientificName); exists {
@@ -1295,11 +1435,69 @@ func (p *Processor) getBaseConfidenceThreshold(settings *conf.Settings, commonNa
 		return float32(config.Threshold)
 	}
 
-	// Fall back to model-specific global threshold
-	if modelID == classifier.RegistryIDBat {
+	// Fall back to the model-specific global threshold.
+	return modelGlobalConfidenceThreshold(settings, modelID)
+}
+
+// modelGlobalConfidenceThreshold returns the global confidence threshold applied
+// to a model's detections when the species has no custom per-species threshold.
+// The Bat model always uses its own threshold. Perch v2 and BirdNET v3.0 use
+// their own threshold only when their OverrideThreshold toggle is enabled;
+// otherwise, and for every other model (including the primary BirdNET), the
+// primary BirdNET threshold applies.
+func modelGlobalConfidenceThreshold(settings *conf.Settings, modelID string) float32 {
+	switch modelID {
+	case classifier.RegistryIDBat:
 		return float32(settings.Bat.Threshold)
+	case classifier.RegistryIDPerchV2:
+		if settings.Perch.OverrideThreshold {
+			return float32(settings.Perch.Threshold)
+		}
+	case classifier.RegistryIDBirdNETV3:
+		if settings.BirdNETV3.OverrideThreshold {
+			return float32(settings.BirdNETV3.Threshold)
+		}
 	}
 	return float32(settings.BirdNET.Threshold)
+}
+
+// resolveClipName returns the clip filename to persist for a detection, or an
+// empty string when audio export is disabled. Keeping ClipName empty while
+// export is off makes it a truthful per-detection signal (no clip exists or is
+// being encoded), which the media endpoint and the frontend rely on to gate
+// audio playback per detection under runtime toggling of the export setting.
+func (p *Processor) resolveClipName(settings *conf.Settings, item *classifier.Results, scientificName string, confidence float32) string {
+	if !settings.Realtime.Audio.Export.Enabled {
+		return ""
+	}
+
+	clipName := p.generateClipName(settings, scientificName, confidence)
+	return p.applyExportFormatExtension(settings, clipName, item.ModelID, item.Source)
+}
+
+// applyExportFormatExtension overrides a clip name's extension to match the
+// container the exporter will actually write, keeping the persisted ClipName in
+// lockstep with the on-disk file. buildClipPath derives the extension from
+// Export.Type; a bat/ultrasonic capture above the analysis rate is stored in the
+// dedicated Export.UltrasonicType instead (resolveExportFormat), so its extension
+// must be rewritten here. Shared by the createDetection and extended-capture paths
+// so both persist the same extension. An empty clip name is returned unchanged.
+func (p *Processor) applyExportFormatExtension(settings *conf.Settings, clipName, modelID string, source datastore.AudioSource) string {
+	if clipName == "" {
+		return clipName
+	}
+	mInfo := classifier.DetectionModelInfoForID(modelID)
+	sourceRate := p.resolveAudioSource(source).SampleRate
+	format := exportFormatForModel(mInfo.Name, mInfo.Version, sourceRate, &settings.Realtime.Audio.Export)
+	// GetFileExtension returns the extension WITHOUT a leading dot; replaceExtension
+	// expects the dot. Guard against an empty extension (only reachable with an
+	// unvalidated empty format) so buildClipPath's own extension is preserved rather
+	// than clobbered to a trailing dot (GitHub #2810/#2814).
+	ext := convert.GetFileExtension(format)
+	if ext == "" {
+		return clipName
+	}
+	return replaceExtension(clipName, "."+ext)
 }
 
 // generateClipName generates a clip name for the given scientific name and confidence.
@@ -1314,18 +1512,25 @@ func (p *Processor) generateClipNameWithDuration(settings *conf.Settings, scient
 	return p.buildClipPath(settings, scientificName, confidence, durationSeconds, detectionTime)
 }
 
-// buildClipPathFallbackOnce guards the one-shot WARN log emitted when
-// buildClipPath falls back to a wav extension because Export.Type produced
-// an empty GetFileExtension result. Post fix this branch should be
-// unreachable - the WARN exists purely as a defense-in-depth signal that a
-// previously unknown code path is writing extension-less clip paths to the
-// DB (see GitHub #2810, #2814).
+// buildClipPathFallbackFired records that the fallback branch below has been
+// taken at least once, for the test helper. It is set outside the log guard on
+// purpose; see the comment at the assignment. The guard itself is
+// clipPathExtFallbackLogged (actions_database.go), keyed on the offending
+// Export.Type.
 //
-//nolint:gochecknoglobals // one-shot WARN guard for defense-in-depth fallback
-var (
-	buildClipPathFallbackOnce  sync.Once
-	buildClipPathFallbackFired atomic.Bool
-)
+// buildClipPath falls back to a wav extension when Export.Type produces an
+// empty GetFileExtension result. Post fix this branch should be unreachable -
+// the WARN exists purely as a defense-in-depth signal that a previously unknown
+// code path is writing extension-less clip paths to the DB (see GitHub #2810,
+// #2814).
+//
+// Keyed rather than once-per-process because Export.Type is hot-reloadable and
+// is the very value the WARN reports. A bare sync.Once let the first bad value
+// silence every later, different one, so an operator who fixed one typo and
+// introduced another would get silence instead of the second warning.
+//
+//nolint:gochecknoglobals // paired with the log-flood guard, see above
+var buildClipPathFallbackFired atomic.Bool
 
 // buildClipPath constructs a clip file path with optional duration suffix.
 // When durationSeconds is 0, the duration suffix is omitted.
@@ -1341,8 +1546,13 @@ func (p *Processor) buildClipPath(settings *conf.Settings, scientificName string
 	// only Type would otherwise leak into the filename as a ". " suffix.
 	fileType := convert.GetFileExtension(strings.TrimSpace(rawExportType))
 	if fileType == "" {
-		buildClipPathFallbackOnce.Do(func() {
-			buildClipPathFallbackFired.Store(true)
+		// Stored outside the guard: onceByKey marks the key BEFORE running emit,
+		// so a concurrent second caller returns while the first is still inside
+		// the closure, and a flag set in there would read as false for a branch
+		// that had already been taken. Set here it means exactly what its reader
+		// wants to know, "the fallback ran", and cannot race the guard.
+		buildClipPathFallbackFired.Store(true)
+		clipPathExtFallbackLogged.do(rawExportType, func() {
 			GetLogger().Warn("audio export type produced empty file extension, falling back to wav",
 				logger.String("export_type", rawExportType),
 				logger.String("component", "processor"),
@@ -1381,14 +1591,30 @@ func (p *Processor) shouldDiscardDetection(item *PendingDetection, settings *con
 		p.detectionMutex.RLock()
 		lastHumanDetection, exists := p.LastHumanDetection[item.Source]
 		p.detectionMutex.RUnlock()
-		if exists && lastHumanDetection.After(item.FirstDetected) {
+		// Discard when a human voice was detected at or after the bird detection
+		// started. Using !Before (>=) rather than After (>) so a human and a bird
+		// sharing the exact same audio chunk (equal timestamps) still trips the
+		// privacy filter instead of leaking the detection.
+		if exists && !lastHumanDetection.Time.Before(item.FirstDetected) {
 			// Add structured logging for privacy filter
 			GetLogger().Debug("Detection discarded by privacy filter",
 				logger.String("species", item.Detection.Result.Species.CommonName),
 				logger.Time("detection_time", item.FirstDetected),
-				logger.Time("last_human_detection", lastHumanDetection),
+				logger.Time("last_human_detection", lastHumanDetection.Time),
+				logger.String("trigger", lastHumanDetection.Trigger),
 				logger.String("source", p.getDisplayNameForSource(item.Source)),
 				logger.String("operation", "privacy_filter"))
+			// Attribute the discard to the trigger that flagged the human voice
+			// (label match vs VAD speech gate), when telemetry is enabled.
+			if settings.Realtime.Telemetry.Enabled && p.Metrics != nil {
+				trigger := lastHumanDetection.Trigger
+				if trigger == "" {
+					// Defensive: both writers set a trigger, but never emit a
+					// bogus empty label if a future path forgets to.
+					trigger = metrics.TriggerLabel
+				}
+				p.Metrics.PrivacyFilter.RecordDiscard(trigger)
+			}
 			return true, "privacy filter"
 		}
 	}
@@ -1437,7 +1663,7 @@ func (p *Processor) shouldDiscardDetection(item *PendingDetection, settings *con
 				logger.Time("detection_time", item.FirstDetected),
 				logger.String("source", p.getDisplayNameForSource(item.Source)),
 				logger.String("operation", "daylight_filter"))
-			return true, "daylight filter"
+			return true, reasonDaylightFilter
 		}
 	}
 
@@ -1464,7 +1690,7 @@ func (p *Processor) processApprovedDetection(item *PendingDetection, speciesName
 	for modelID, contrib := range item.ModelContributions {
 		baseThreshold := float64(p.getBaseConfidenceThreshold(settings, speciesName, scientificName, modelID))
 		if contrib.MaxConfidence >= baseThreshold {
-			p.LearnFromApprovedDetection(modelID, speciesName, scientificName, float32(contrib.MaxConfidence))
+			p.LearnFromApprovedDetection(speciesName, scientificName, float32(contrib.MaxConfidence), float32(baseThreshold))
 		}
 	}
 
@@ -1545,16 +1771,10 @@ func (p *Processor) processApprovedDetection(item *PendingDetection, speciesName
 // calculateMinDetectionsFromSettings computes minimum detections from settings alone.
 // This is a standalone function that doesn't require a Processor instance.
 func calculateMinDetectionsFromSettings(settings *conf.Settings) int {
-	// BirdNET uses 3-second chunks for analysis
+	// BirdNET uses 3-second chunks for analysis. Since Option A (issue #4096) the
+	// realtime buffer honors birdnet.overlap, so the analysis step is
+	// chunkDurationSeconds - overlap, matching the buffer's BufferInterval.
 	const chunkDurationSeconds = 3.0
-	// Bird vocalization reference window - typical duration of a bird call
-	// Used to calculate how many detections are possible within a single vocalization
-	const referenceWindowSeconds = 6.0
-	// Minimum segment length to prevent division by near-zero values
-	const minSegmentLength = 0.1
-	// Small epsilon to prevent floating-point rounding errors in ceil()
-	// Without this, values like 5.0000000003 would ceil to 6 instead of 5
-	const epsilon = 1e-9
 
 	// Get filtering level from settings
 	level := settings.Realtime.FalsePositiveFilter.Level
@@ -1571,7 +1791,7 @@ func calculateMinDetectionsFromSettings(settings *conf.Settings) int {
 			logger.Float64("overlap", overlap),
 			logger.Float64("chunk_duration", chunkDurationSeconds),
 			logger.String("operation", "calculate_min_detections"))
-		// Continue with safe fallback
+		// Continue with safe fallback (segment length is floored in the helper)
 	}
 
 	// Validate overlap meets minimum for level (warning only, don't block)
@@ -1586,24 +1806,8 @@ func calculateMinDetectionsFromSettings(settings *conf.Settings) int {
 		// Continue with calculation - system will work but may not achieve target filtering
 	}
 
-	// Calculate segment length (how often we analyze)
-	segmentLength := math.Max(minSegmentLength, chunkDurationSeconds-overlap)
-
-	// How many detections are possible within a 6-second bird vocalization window?
-	maxDetectionsIn6s := referenceWindowSeconds / segmentLength
-
-	// Get threshold percentage for this level
-	threshold := getThresholdForLevel(level)
-
-	// Calculate minimum required detections
-	// Use Ceil to ensure we require at least the threshold percentage
-	// Subtract epsilon before ceiling to handle floating-point precision issues
-	// (e.g., 5.0000000003 becomes 4.9999999993, which correctly ceils to 5)
-	// Always require at least 1 detection
-	required := maxDetectionsIn6s*threshold - epsilon
-	minDetections := int(math.Max(1, math.Ceil(required)))
-
-	return minDetections
+	// The analysis step (how often a new window is produced) is chunk - overlap.
+	return minDetectionsForSegment(chunkDurationSeconds-overlap, level)
 }
 
 // calculateMinDetections is a convenience method that calls calculateMinDetectionsFromSettings
@@ -1638,6 +1842,16 @@ func (p *Processor) flushPendingDetections() (pendingCount, flushedCount int) {
 		itemMinDetections := calculateMinDetectionsForModel(settings, item.BestModelID)
 
 		if shouldDiscard, reason := p.shouldDiscardDetection(&item, settings, itemMinDetections); shouldDiscard {
+			// Aggregate daylight-filter discards into the periodic pipeline-stats
+			// summary so a user who sees zero saved detections has an at-a-glance
+			// signal that a filter is eating them. The per-detection log stays at
+			// Info: it carries the discard_detection operation the
+			// /system/events/detections API aggregates into per-species discard
+			// counts (DiscardReasons / TopDiscarded), so demoting it would silently
+			// drop daylight-filtered species from that endpoint on a default config.
+			if reason == reasonDaylightFilter && p.pipelineStats != nil {
+				p.pipelineStats.RecordDaylightDiscard(item.Source, item.BestModelID)
+			}
 			GetLogger().Info("discarding detection",
 				logger.String("species", speciesName),
 				logger.String("source", p.getDisplayNameForSource(item.Source)),
@@ -1821,7 +2035,7 @@ func (p *Processor) getActionsForItem(det *Detections) []Action {
 					// the only branch where we know for sure that the
 					// user configured a working action and the path is
 					// temporarily broken. Unimplemented action types
-					// must not trip this flag — they are a separate
+					// must not trip this flag: they are a separate
 					// issue and should fall through to defaults.
 					brokenCommandPathSkipped = true
 					continue
@@ -1979,15 +2193,25 @@ func (p *Processor) getDefaultActions(det *Detections) []Action {
 		if mqttClient != nil {
 			mqttRetryConfig := retryConfigFromSettings(settings.Realtime.MQTT.RetrySettings)
 
+			// Derive the narrow species-time capability from the datastore. Both
+			// backends (*datastore.DataStore and *v2only.Datastore) implement it;
+			// a nil or unsupported datastore (DB disabled) yields nil, so the
+			// MQTT payload carries null fields.
+			var speciesTimeSource speciesDetectionTimeSource
+			if src, ok := any(p.Ds).(speciesDetectionTimeSource); ok {
+				speciesTimeSource = src
+			}
+
 			mqttAction = &MqttAction{
-				Settings:       settings,
-				MqttClient:     mqttClient,
-				EventTracker:   p.GetEventTracker(),
-				DetectionCtx:   detectionCtx, // Share context from DatabaseAction
-				Result:         det.Result,   // Domain model (single source of truth)
-				BirdImageCache: p.BirdImageCache,
-				RetryConfig:    mqttRetryConfig,
-				CorrelationID:  det.CorrelationID,
+				Settings:          settings,
+				MqttClient:        mqttClient,
+				EventTracker:      p.GetEventTracker(),
+				DetectionCtx:      detectionCtx, // Share context from DatabaseAction
+				Result:            det.Result,   // Domain model (single source of truth)
+				BirdImageCache:    p.BirdImageCache,
+				RetryConfig:       mqttRetryConfig,
+				CorrelationID:     det.CorrelationID,
+				SpeciesTimeSource: speciesTimeSource,
 			}
 		}
 	}
@@ -2105,34 +2329,28 @@ func retryConfigFromSettings(rs conf.RetrySettings) jobqueue.RetryConfig {
 func (p *Processor) buildSaveAudioAction(det *Detections, detectionCtx *DetectionContext) *SaveAudioAction {
 	settings := p.currentSettings()
 
-	captureLength := settings.Realtime.Audio.Export.Length
-	if !det.Result.EndTime.IsZero() && !det.Result.BeginTime.IsZero() {
-		preCapture := settings.Realtime.Audio.Export.PreCapture
-		derivedLength := int(det.Result.EndTime.Sub(det.Result.BeginTime).Seconds()) + preCapture
-		if derivedLength > captureLength {
-			captureLength = derivedLength
-			GetLogger().Info("Using derived capture duration from detection time span",
-				logger.String("detection_id", det.CorrelationID),
-				logger.String("species", det.Result.Species.CommonName),
-				logger.Int("duration_seconds", captureLength),
-				logger.Int("configured_length", settings.Realtime.Audio.Export.Length),
-				logger.String("operation", "extended_capture_audio_export"))
-		}
+	// Derive the capture length and readiness time from the shared conf helper so this
+	// scheduler and the media API (which decides whether a not-yet-written clip is still
+	// legitimately pending) never compute the window differently. The two log lines are
+	// preserved verbatim, driven off the returned Derived/Capped flags.
+	win, _ := settings.DetectionCaptureWindow(det.Result.BeginTime, det.Result.EndTime)
+	if win.Derived {
+		GetLogger().Info("Using derived capture duration from detection time span",
+			logger.String("detection_id", det.CorrelationID),
+			logger.String("species", det.Result.Species.CommonName),
+			logger.Int("duration_seconds", win.RequestedLength),
+			logger.Int("configured_length", settings.Realtime.Audio.Export.Length),
+			logger.String("operation", "extended_capture_audio_export"))
 	}
-
-	// Cap at capture buffer size to prevent reading beyond buffer bounds.
-	bufferCap := conf.DefaultCaptureBufferSeconds
-	if settings.Realtime.ExtendedCapture.Enabled && settings.Realtime.ExtendedCapture.CaptureBufferSeconds > 0 {
-		bufferCap = settings.Realtime.ExtendedCapture.CaptureBufferSeconds
-	}
-	if captureLength > bufferCap {
+	if win.Capped {
+		// Cap at capture buffer size to prevent reading beyond buffer bounds.
 		GetLogger().Warn("Capping capture length at buffer size",
 			logger.String("detection_id", det.CorrelationID),
-			logger.Int("requested_seconds", captureLength),
-			logger.Int("buffer_seconds", bufferCap),
+			logger.Int("requested_seconds", win.RequestedLength),
+			logger.Int("buffer_seconds", win.BufferCap),
 			logger.String("operation", "capture_buffer_cap"))
-		captureLength = bufferCap
 	}
+	captureLength := win.Length
 
 	// Extended Capture may request a segment whose tail has not yet been
 	// written to the ring buffer (e.g. BeginTime was a few seconds ago but
@@ -2142,23 +2360,34 @@ func (p *Processor) buildSaveAudioAction(det *Detections, detectionCtx *Detectio
 	// mechanism picks it up once the buffer has caught up to captureEndTime.
 	// Only take this path when BufferMgr is available; if it is nil the
 	// eager read below will produce a proper error log and no-op action.
-	captureEndTime := det.Result.BeginTime.Add(time.Duration(captureLength) * time.Second)
-	if p.BufferMgr != nil && captureEndTime.After(time.Now()) {
+	// Every branch below returns the same action differing only in how the PCM
+	// is obtained, so the shared fields are built once. Restating them per branch
+	// means every newly added field has to be repeated in all three, and a field
+	// missed on one branch is invisible until that branch is exercised.
+	base := func() *SaveAudioAction {
 		return &SaveAudioAction{
 			Settings:         settings,
 			ClipName:         det.Result.ClipName,
-			bufferMgr:        p.BufferMgr,
-			sourceID:         det.Result.AudioSource.ID,
-			beginTime:        det.Result.BeginTime,
-			duration:         captureLength,
-			readyAt:          captureEndTime,
 			sourceSampleRate: det.Result.AudioSource.SampleRate,
 			modelName:        det.Result.Model.Name,
+			modelVersion:     det.Result.Model.Version,
+			species:          strings.ToLower(det.Result.Species.CommonName),
 			NoteID:           det.Result.ID, // May be 0 here; updated after DB save via DetectionCtx
 			PreRenderer:      p.preRenderer,
 			DetectionCtx:     detectionCtx,
 			CorrelationID:    det.CorrelationID,
 		}
+	}
+
+	captureEndTime := win.ReadyAt
+	if p.BufferMgr != nil && captureEndTime.After(time.Now()) {
+		a := base()
+		a.bufferMgr = p.BufferMgr
+		a.sourceID = det.Result.AudioSource.ID
+		a.beginTime = det.Result.BeginTime
+		a.duration = captureLength
+		a.readyAt = captureEndTime
+		return a
 	}
 
 	// Read PCM data from the capture buffer NOW, while the data is still in the
@@ -2175,29 +2404,12 @@ func (p *Processor) buildSaveAudioAction(det *Detections, detectionCtx *Detectio
 			logger.Int("duration_seconds", captureLength),
 			logger.String("operation", "capture_buffer_read_for_export"))
 		// Return an action with nil pcmData; Execute() will be a no-op
-		return &SaveAudioAction{
-			Settings:         settings,
-			ClipName:         det.Result.ClipName,
-			sourceSampleRate: det.Result.AudioSource.SampleRate,
-			modelName:        det.Result.Model.Name,
-			NoteID:           det.Result.ID, // May be 0 here; updated after DB save via DetectionCtx
-			PreRenderer:      p.preRenderer,
-			DetectionCtx:     detectionCtx,
-			CorrelationID:    det.CorrelationID,
-		}
+		return base()
 	}
 
-	return &SaveAudioAction{
-		Settings:         settings,
-		ClipName:         det.Result.ClipName,
-		pcmData:          pcmData,
-		sourceSampleRate: det.Result.AudioSource.SampleRate,
-		modelName:        det.Result.Model.Name,
-		NoteID:           det.Result.ID, // May be 0 here; updated after DB save via DetectionCtx
-		PreRenderer:      p.preRenderer,
-		DetectionCtx:     detectionCtx,
-		CorrelationID:    det.CorrelationID,
-	}
+	a := base()
+	a.pcmData = pcmData
+	return a
 }
 
 // readCaptureSegment reads PCM data from the audiocore capture buffer.
@@ -2421,9 +2633,14 @@ func (p *Processor) ShutdownWithContext(ctx context.Context) error {
 	}
 	p.discoveryDebounceMu.Unlock()
 
-	// Stop threshold persistence and cleanup goroutines first
-	if p.thresholdsCancel != nil {
-		p.thresholdsCancel()
+	// Stop threshold persistence and cleanup goroutines first. Snapshot the cancel func
+	// under thresholdsMutex so this never races with StopDynamicThresholds rewriting the
+	// field when the feature is toggled off at runtime (see #1025). cancel() is idempotent.
+	p.thresholdsMutex.RLock()
+	thresholdsCancel := p.thresholdsCancel
+	p.thresholdsMutex.RUnlock()
+	if thresholdsCancel != nil {
+		thresholdsCancel()
 	}
 
 	// Cancel flusher goroutine
@@ -2466,11 +2683,18 @@ func (p *Processor) ShutdownWithContext(ctx context.Context) error {
 		p.preRenderer.Stop()
 	}
 
-	// Stop the job queue — use remaining context budget, not a hardcoded 30 seconds.
+	// Release the Silero VAD detector (privacy filter). The gate mutex makes this
+	// block until any in-flight inference completes before the ONNX session is
+	// freed, so it must run after the results-consumer workers are cancelled.
+	if p.vadGate != nil {
+		p.vadGate.close()
+	}
+
+	// Stop the job queue: use remaining context budget, not a hardcoded 30 seconds.
 	// Always send the stop signal even if the deadline has passed (remaining <= 0)
 	// so the queue's workers are notified and don't keep running after DB close.
 	// Enforce a minimum grace period so in-flight DB writes can complete before
-	// closeDataStore runs — a zero timeout would return immediately, risking
+	// closeDataStore runs: a zero timeout would return immediately, risking
 	// writes to a closed database connection.
 	// Check ctx.Err() first to handle cancellation without deadline (WithCancel).
 	queueStopTimeout := 30 * time.Second
@@ -2486,7 +2710,18 @@ func (p *Processor) ShutdownWithContext(ctx context.Context) error {
 			logger.String("operation", "job_queue_shutdown"))
 	}
 
-	// Skip remaining cleanup if context is already expired — these are
+	// Disconnect MQTT before the expired-context bail-out below. Not gated on
+	// IsConnected(): a client whose initial connect failed is retained with its
+	// reconnect loop armed, and Disconnect is what cancels that loop, so skipping
+	// it would leave the timer running past shutdown. Disconnect already handles
+	// the not-connected case, and for a client that never connected it does no
+	// blocking work at all: otherwise it is bounded by ShutdownDisconnectTimeout.
+	mqttClient := p.GetMQTTClient()
+	if mqttClient != nil {
+		mqttClient.Disconnect()
+	}
+
+	// Skip remaining cleanup if context is already expired: these are
 	// nice-to-have disconnects, not critical for data integrity.
 	// Context expiration is expected, not an error condition for the caller.
 	if ctx.Err() != nil {
@@ -2497,12 +2732,6 @@ func (p *Processor) ShutdownWithContext(ctx context.Context) error {
 
 	// Disconnect BirdWeather client
 	p.DisconnectBwClient()
-
-	// Disconnect MQTT client if connected
-	mqttClient := p.GetMQTTClient()
-	if mqttClient != nil && mqttClient.IsConnected() {
-		mqttClient.Disconnect()
-	}
 
 	// Close the species tracker to release resources
 	p.speciesTrackerMu.RLock()

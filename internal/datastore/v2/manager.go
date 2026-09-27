@@ -31,6 +31,12 @@ const defaultGormSlowThreshold = 1 * time.Second
 // Matches the 30s timeout used by the legacy datastore.
 const sqliteBusyTimeoutMs = 30_000
 
+// sqliteMmapSizeBytes caps SQLite's memory-mapped I/O for the main DB file at
+// 256 MiB. It is a max (SQLite maps at most the file size) and consumes virtual
+// address space, not resident memory, so it is safe on small 64-bit hosts and a
+// large win for cold reads on slow storage. Matches the legacy datastore.
+const sqliteMmapSizeBytes = 256 * 1024 * 1024
+
 // walCheckpointInterval is how often a periodic passive WAL checkpoint runs.
 // SQLite's auto-checkpoint (1000 pages) may not fire reliably with connection
 // pooling because the page counter is per-connection. A 5-minute interval
@@ -229,15 +235,10 @@ func NewSQLiteManager(cfg Config) (*SQLiteManager, error) {
 
 	// Build DSN with recommended SQLite pragmas.
 	// All pragmas are set via DSN query parameters so they apply to every
-	// connection created by the pool, not just the first one.
-	// Use safe separator in case dbPath already contains query parameters
-	// (e.g., "file::memory:?cache=shared" in tests).
-	pragmas := fmt.Sprintf("_journal_mode=WAL&_busy_timeout=%d&_foreign_keys=ON&_synchronous=NORMAL&_cache_size=-4000", sqliteBusyTimeoutMs)
-	sep := "?"
-	if strings.Contains(dbPath, "?") {
-		sep = "&"
-	}
-	dsn := dbPath + sep + pragmas
+	// connection created by the pool, not just the first one. dsnAppendParams uses a safe
+	// separator in case dbPath already contains query parameters (e.g. "file::memory:?cache=shared").
+	pragmas := fmt.Sprintf("_journal_mode=WAL&_busy_timeout=%d&_foreign_keys=ON&_synchronous=NORMAL&_cache_size=-16000", sqliteBusyTimeoutMs)
+	dsn := dsnAppendParams(dbPath, pragmas)
 
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		Logger: gormLogger,
@@ -256,6 +257,16 @@ func NewSQLiteManager(cfg Config) (*SQLiteManager, error) {
 		return nil, fmt.Errorf("failed to get underlying database: %w", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
+
+	// Enable memory-mapped I/O for reads. mattn/go-sqlite3 has no _mmap_size DSN
+	// param, so set it per-connection; with SetMaxOpenConns(1) and no connection
+	// expiry there is a single long-lived connection, so this one Exec persists.
+	// mmap maps the main DB file (up to the cap or its size) into the page cache,
+	// avoiding read() syscalls; it is read-only and WAL/durability are unaffected.
+	if err := db.Exec(fmt.Sprintf("PRAGMA mmap_size=%d", sqliteMmapSizeBytes)).Error; err != nil && cfg.Logger != nil {
+		cfg.Logger.Warn("Failed to set SQLite mmap_size (continuing without memory-mapped reads)",
+			logger.Error(err))
+	}
 
 	return &SQLiteManager{
 		db:     db,
@@ -303,6 +314,33 @@ func v2Entities() []any {
 	}
 }
 
+// dropStaleThresholdTables recreates the dynamic_thresholds and threshold_events tables
+// when they still carry the pre-#4195 label_id column. Those tables were re-keyed from a
+// model-scoped label foreign key to species_name (lowercase common name); since GORM's
+// AutoMigrate is additive and cannot drop the old NOT NULL/unique label_id column, a stale
+// table would reject every new insert. Existing rows are intentionally discarded (#4195):
+// dynamic thresholds are short-lived and relearned. The GORM migrator resolves the physical
+// (prefix-aware) table name from the entity, so this is dialect- and prefix-agnostic.
+func dropStaleThresholdTables(db *gorm.DB, log logger.Logger) error {
+	mig := db.Migrator()
+	// entities.ThresholdEvent, then entities.DynamicThreshold. "label_id" is checked as a raw
+	// column name (the field no longer exists on the struct), so HasColumn probes the physical
+	// table for a leftover label_id column.
+	for _, tbl := range []any{&entities.ThresholdEvent{}, &entities.DynamicThreshold{}} {
+		if !mig.HasTable(tbl) || !mig.HasColumn(tbl, "label_id") {
+			continue
+		}
+		if err := mig.DropTable(tbl); err != nil {
+			return fmt.Errorf("failed to drop stale threshold table for re-keying: %w", err)
+		}
+		if log != nil {
+			log.Info("recreated threshold table to key on species_name (#4195)",
+				logger.String("operation", "drop_stale_threshold_tables"))
+		}
+	}
+	return nil
+}
+
 // Initialize creates the schema and seeds initial data.
 func (m *SQLiteManager) Initialize() error {
 	// Rename tables that changed names in PR #2165 (TableName() overrides removed).
@@ -319,6 +357,13 @@ func (m *SQLiteManager) Initialize() error {
 				logger.Error(err),
 				logger.String("operation", "cleanup_legacy_contamination"))
 		}
+	}
+
+	// Re-key threshold tables on species_name if they still carry the legacy label_id
+	// column; AutoMigrate cannot drop it, so recreate them (#4195). Rows are discarded.
+	if err := dropStaleThresholdTables(m.db, m.log); err != nil {
+		reportInitFailure("sqlite", "dropStaleThresholdTables", err, m.dbPath)
+		return err
 	}
 
 	// Run GORM auto-migrations for all entities

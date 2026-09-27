@@ -109,6 +109,14 @@
       "closeModal": "Fechar janela modal",
       "dismissAlert": "Descartar alerta",
       "closeNotification": "Fechar notificação",
+      "toastRegion": {
+        "topLeft": "Notificações, canto superior esquerdo",
+        "topCenter": "Notificações, parte superior central",
+        "topRight": "Notificações, canto superior direito",
+        "bottomLeft": "Notificações, canto inferior esquerdo",
+        "bottomCenter": "Notificações, parte inferior central",
+        "bottomRight": "Notificações, canto inferior direito"
+      },
       "toggleDropdown": "Alternar menu suspenso",
       "sortAscending": "Ordenar crescente",
       "selectLanguage": "Selecionar idioma",
@@ -130,10 +138,10 @@
       "selectToday": "Selecionar hoje",
       "dateSelected": "Data selecionada: {date}",
       "calendarNavigation": "Use as teclas de seta para navegar no calendário, Enter para selecionar, Escape para fechar",
-      "downloadCsv": "Baixar lista de espécies em CSV",
       "visitEbirdLink": "Abrir eBird.org em uma nova aba",
       "learnEbirdTaxonomyLink": "Abrir Taxonomia eBird em uma nova aba",
-      "resizeHandle": "Arraste para redimensionar"
+      "resizeHandle": "Arraste para redimensionar",
+      "imageCredit": "Crédito da imagem: {name}"
     },
     "labels": {
       "confidence": "Confiança",
@@ -204,12 +212,20 @@
     "serverError": "500 - Erro interno do servidor",
     "componentError": "Erro ao carregar componente",
     "speciesAnalytics": "Análise de espécies",
-    "advancedAnalytics": "Análise avançada",
     "detectionDetails": "Detalhes da detecção",
-    "settingsNotAvailable": "Configurações não disponíveis"
+    "settingsNotAvailable": "Configurações não disponíveis",
+    "analyticsSummary": "Análise - Resumo",
+    "analyticsActivity": "Análise - Padrões de Atividade",
+    "analyticsTrends": "Análise - Tendências",
+    "analyticsBiodiversity": "Análise - Biodiversidade",
+    "analyticsReview": "Análise - Revisão e Precisão",
+    "analyticsNocturnal": "Análise - Atividade noturna",
+    "analyticsWeather": "Análise - Correlação climática",
+    "analyticsSoundscape": "Análise - Paisagem sonora"
   },
   "navigation": {
     "dashboard": "Painel",
+    "liveAudio": "Áudio ao vivo",
     "settingsMenu": "Menu de configurações",
     "theme": "Tema",
     "github": "GitHub",
@@ -237,7 +253,13 @@
     "reportBugAriaLabel": "Reportar um erro no GitHub (abre em nova janela)",
     "askQuestionAriaLabel": "Fazer uma pergunta no GitHub Discussions (abre em nova janela)",
     "viewOnGithubAriaLabel": "Ver BirdNET-Go no GitHub (abre em nova janela)",
-    "health": "Health"
+    "health": "Saúde",
+    "sections": {
+      "explore": "Explorar",
+      "patterns": "Padrões",
+      "environment": "Ambiente",
+      "dataQuality": "Qualidade dos dados"
+    }
   },
   "about": {
     "title": "BirdNET-Go",
@@ -397,6 +419,7 @@
         "updatingIntervals": "A atualizar intervalos de deteção...",
         "reconfiguringMqtt": "A atualizar ligação MQTT...",
         "reconfiguringBirdweather": "A atualizar integração BirdWeather...",
+        "reconfiguringEbird": "Updating eBird integration...",
         "reconfiguringStreams": "A atualizar fluxos de áudio...",
         "reconfiguringTelemetry": "A atualizar definições de telemetria...",
         "reconfiguringPushNotifications": "A reconfigurar fornecedores de notificações push...",
@@ -404,6 +427,9 @@
         "recalculatingThresholds": "Recalculando limiares dinâmicos para novo valor base",
         "reconfiguringDynamicThresholds": "A reconfigurar limiares dinâmicos...",
         "webserverRestartRequired": "Definições do servidor web alteradas. Reinício necessário.",
+        "oauthRestartRequired": "Definições do provedor de autenticação alteradas. Reinício necessário.",
+        "databaseRestartRequired": "Configurações do banco de dados alteradas. Reinicialização necessária.",
+        "loggingRestartRequired": "Configurações de registro alteradas. Reinicialização necessária.",
         "reconfiguringSoundLevel": "A atualizar monitorização do nível de som...",
         "reconfiguringAudioSources": "A reconfigurar fontes de áudio...",
         "rebuildingExtendedCapture": "A reconstruir filtro de captura estendida...",
@@ -433,11 +459,37 @@
       },
       "buffer": {
         "overloadTitle": "Análise de áudio sobrecarregada",
-        "overloadMessage": "O seu sistema está a descartar {dropRate} % das amostras de áudio da fonte ''{sourceName}'' porque não consegue acompanhar a análise. Reduza o valor de sobreposição do BirdNET nas definições de deteção ou considere atualizar para um CPU mais rápido."
+        "overloadMessage": "O seu sistema está a descartar {dropRate} % das amostras de áudio da fonte '{sourceName}' porque não consegue acompanhar a análise. Reduza o valor de sobreposição do BirdNET nas definições de deteção ou considere atualizar para um CPU mais rápido."
       },
       "ort": {
         "unavailableTitle": "ONNX Runtime não disponível",
         "unavailableMessage": "O ONNX Runtime {requiredVersion} é necessário para {modelName}, mas não foi encontrado. Consulte o guia de instalação: {installGuideURL}"
+      },
+      "region": {
+        "staleTitle": "A região do modelo pode estar desatualizada",
+        "staleMessage": "{modelName} está instalado para {oldRegion}, mas a sua nova localização corresponde a {newRegion}. Pode mudar de variante a partir da galeria de modelos nas Configurações.",
+        "staleGlobalMessage": "{modelName} está instalado para {oldRegion}, mas a sua nova localização está fora da sua cobertura. Pode mudar para a variante global a partir da galeria de modelos nas Configurações."
+      },
+      "modelPath": {
+        "reconciledTitle": "Caminhos dos ficheiros do modelo reparados para {modelName}",
+        "reconciledMessage": "Os caminhos de ficheiro configurados para {modelName} estavam desatualizados e foram reparados para corresponder ao modelo instalado em {modelPath}.",
+        "substitutedTitle": "Ficheiro de modelo configurado para {modelName} não encontrado",
+        "substitutedMessage": "O ficheiro de modelo configurado para {modelName} não foi encontrado no disco, pelo que o modelo instalado em {modelPath} está a ser utilizado em vez disso. A sua configuração não foi alterada.",
+        "unreadableTitle": "Não foi possível ler o ficheiro de modelo configurado para {modelName}",
+        "unreadableMessage": "O ficheiro de modelo configurado para {modelName} existe, mas não pôde ser lido, pelo que o modelo instalado em {modelPath} está a ser utilizado em vez disso. A sua configuração não foi alterada. Verifique as permissões do ficheiro e se o seu armazenamento está montado.",
+        "builtinMessage": "O ficheiro de modelo configurado para {modelName} não foi encontrado no disco e não existe nenhum modelo instalado disponível para o substituir, pelo que o modelo integrado está a ser utilizado em vez disso. A sua configuração não foi alterada.",
+        "notRegisteredTitle": "Nenhum modelo está a analisar {sourceName}",
+        "notRegisteredMessage": "Nenhum áudio está a chegar a {models} na fonte de áudio \"{sourceName}\", pelo que não são produzidas deteções. Abra Sistema > Modelos de IA para verificar o seu estado por fonte e confirmar que a fonte de áudio está conectada e a enviar áudio."
+      },
+      "acousticModels": {
+        "noneTitle": "Nenhum modelo acústico ativado",
+        "noneMessage": "Nenhum modelo acústico está carregado, pelo que o áudio é capturado mas não é analisado. Ative um modelo em Configurações > Análise, ou instale um a partir da galeria de modelos.",
+        "loadFailedTitle": "Não foi possível carregar o modelo acústico",
+        "loadFailedMessage": "Um modelo acústico ativado falhou ao carregar, pelo que o áudio é capturado mas não é analisado. Verifique o modelo na página Sistema > Modelos de IA."
+      },
+      "modelOptimize": {
+        "title": "{count, plural, one {# modelo tem uma versão melhor para este sistema} other {# modelos têm versões melhores para este sistema}}",
+        "message": "Está disponível uma versão mais adequada ao hardware ou à localização deste sistema para: {models}. Abra Configurações > Análise > Modelos e escolha Otimizar para mudar."
       },
       "alert": {
         "firedTitle": "{rule_name}",
@@ -446,18 +498,23 @@
         "errorOccurred": "{error}",
         "disconnected": "{source_name} desligado",
         "error": {
-          "authError": "Autenticação falhou — verifique a chave API ou credenciais",
-          "rateLimited": "Limite de pedidos atingido — os pedidos serão abrandados automaticamente",
+          "authError": "Autenticação falhou - verifique a chave API ou credenciais",
+          "rateLimited": "Limite de pedidos atingido - os pedidos serão abrandados automaticamente",
           "gatewayTimeout": "O serviço pode estar com carga elevada",
           "serverError": "Serviço temporariamente indisponível",
-          "connectionRefused": "Serviço inacessível — verifique o endereço e se está em execução",
-          "dnsError": "Não foi possível resolver o nome do servidor — verifique o endereço",
-          "tlsError": "Erro de TLS/certificado — verifique as definições de segurança",
-          "timeout": "Tempo de ligação expirado — o serviço pode estar lento ou inacessível",
-          "connectionInterrupted": "Ligação interrompida — será tentada novamente automaticamente",
-          "diskFull": "Disco cheio — liberte espaço",
-          "permissionDenied": "Permissão negada — verifique as permissões do ficheiro ou serviço"
+          "connectionRefused": "Serviço inacessível - verifique o endereço e se está em execução",
+          "dnsError": "Não foi possível resolver o nome do servidor - verifique o endereço",
+          "tlsError": "Erro de TLS/certificado - verifique as definições de segurança",
+          "timeout": "Tempo de ligação expirado - o serviço pode estar lento ou inacessível",
+          "connectionInterrupted": "Ligação interrompida - será tentada novamente automaticamente",
+          "diskFull": "Disco cheio - liberte espaço",
+          "permissionDenied": "Permissão negada - verifique as permissões do ficheiro ou serviço"
         }
+      },
+      "inferenceFailing": {
+        "title": "{modelName} falha em todas as análises",
+        "message": "{modelName} está carregado, mas as suas últimas {failures} análises seguidas falharam em {runtime}: a inferência devolveu um erro. O áudio é capturado, mas este modelo não deteta nada. Verifique o modelo na página Sistema > Modelos de IA.",
+        "nonFiniteMessage": "{modelName} está carregado, mas as suas últimas {failures} análises seguidas falharam em {runtime}: o modelo devolveu pontuações inválidas (NaN ou infinitas). O áudio é capturado, mas este modelo não deteta nada. Verifique o modelo na página Sistema > Modelos de IA."
       }
     },
     "loading": "Carregando notificações..."
@@ -486,7 +543,8 @@
       "confidenceMax": "Porcentagem máxima de confiança",
       "verifiedStatus": "Status verificado",
       "lockedStatus": "Status bloqueado",
-      "timeOfDay": "Hora do dia"
+      "timeOfDay": "Hora do dia",
+      "source": "Fonte de áudio"
     },
     "advancedFilters": "Filtros avançados",
     "showAdvancedFilters": "Mostrar filtros avançados",
@@ -508,6 +566,9 @@
       "sunrise": "Nascer do sol +/- 30min",
       "sunset": "Pôr do sol +/- 30min"
     },
+    "sourceOptions": {
+      "any": "Todas as fontes"
+    },
     "sortOptions": {
       "dateDesc": "Data (Mais recente primeiro)",
       "dateAsc": "Data (Mais antigo primeiro)",
@@ -519,6 +580,7 @@
       "timeOfDay": "Hora do dia",
       "species": "Espécie",
       "confidence": "Confiança",
+      "source": "Fonte",
       "status": "Estado",
       "actions": "Ações"
     },
@@ -589,7 +651,7 @@
     "currentlyHearing": {
       "title": "Ouvindo agora",
       "subtitle": "Espécies identificadas em tempo real",
-      "empty": "Tudo calmo — nenhuma ave detectada no momento"
+      "empty": "Tudo calmo - nenhuma ave detectada no momento"
     },
     "rejected": "Rejeitado",
     "newSpeciesHighlights": {
@@ -600,6 +662,7 @@
       "categoryYear": "Nova este ano",
       "categorySeason": "Nova nesta temporada",
       "categorySeasonNamed": "Nova nesta {season}",
+      "categoryInfrequent": "Infrequente",
       "maxConfidenceShort": "Máx {confidence}%",
       "detections": "{count, plural, one {# deteção} other {# deteções}}",
       "lastSeen": "Último: {days, plural, =0 {hoje} one {há # dia} other {há # dias}}"
@@ -634,7 +697,8 @@
         "viewSixHourly": "Ver todas as detecções de {startHour}:00 a {endHour}:00",
         "hourlyDetections": "{count} detecções às {hour}:00 - Clique para ver",
         "biHourlyDetections": "{count} detecções de {startHour}:00 a {endHour}:00 - Clique para ver",
-        "sixHourlyDetections": "{count} detecções de {startHour}:00 a {endHour}:00 - Clique para ver"
+        "sixHourlyDetections": "{count} detecções de {startHour}:00 a {endHour}:00 - Clique para ver",
+        "infrequent": "Infrequente - retornou após {days, plural, one {# dia} other {# dias}} de ausência"
       },
       "loading": {
         "preparing": "Preparando dados...",
@@ -707,6 +771,16 @@
       "recentDetectionsFetch": "Falha ao buscar detecções recentes: {status}",
       "recentDetectionsLoad": "Falha ao carregar detecções recentes",
       "configFetch": "Falha ao buscar configuração do painel: {status}"
+    },
+    "acousticModels": {
+      "noneTitle": "Nenhum modelo acústico ativado",
+      "noneMessage": "O áudio está sendo capturado, mas não analisado. Ative um modelo na galeria de modelos para começar a detectar espécies.",
+      "noneAction": "Abrir galeria de modelos",
+      "loadFailedTitle": "Não foi possível carregar o modelo acústico",
+      "loadFailedMessage": "Não foi possível carregar um modelo ativado, então nenhum áudio está sendo analisado. A página Modelos de IA mostra qual modelo falhou e por quê.",
+      "loadFailedAction": "Ver status de Modelos de IA",
+      "failingTitle": "{count, plural, one {Um modelo falha em todas as análises} other {# modelos falham em todas as análises}}",
+      "failingMessage": "{count, plural, one {{models} está carregado, mas todas as análises falham, pelo que não deteta nada.} other {{models} estão carregados, mas todas as análises falham, pelo que não detetam nada.}} A página Modelos de IA mostra o backend e o erro."
     },
     "banner": {
       "title": "Título",
@@ -788,7 +862,23 @@
     },
     "detail": {
       "species": "Espécie",
-      "observation": "Observação"
+      "observation": "Observação",
+      "aria": {
+        "downloadAudioClip": "Baixar clipe de áudio para a detecção de {name}",
+        "audioRecordingFor": "Gravação de áudio e espectrograma para {name}",
+        "scientificName": "Nome científico",
+        "classificationBadges": "Distintivos de classificação da espécie",
+        "confidence": "Confiança da detecção {confidence}%",
+        "metadata": "Metadados da detecção",
+        "weatherConditions": "Condições meteorológicas no momento da detecção",
+        "comments": "Comentários da detecção",
+        "commentText": "Texto do comentário",
+        "commentTimestamp": "Data e hora do comentário",
+        "mainRegion": "Detalhes de detecção",
+        "tabsHeading": "Abas de informação da detecção",
+        "tabList": "Abas de detalhes da detecção",
+        "speciesHeadingSuffix": "detalhes de detecção"
+      }
     },
     "headers": {
       "dateTime": "Data e hora",
@@ -916,7 +1006,8 @@
     "row": {
       "viewDetails": "Ver detalhes para {species}",
       "play": "Reproduzir",
-      "playAudio": "Reproduzir áudio"
+      "playAudio": "Reproduzir áudio",
+      "imageFailedToLoad": "Falha ao carregar a imagem"
     },
     "media": {
       "title": "Gravação e espectrograma",
@@ -1129,7 +1220,167 @@
     "sections": {
       "overview": "Visão geral",
       "database": "Base de dados",
-      "terminal": "Terminal"
+      "inference": "Modelos de IA",
+      "terminal": "Terminal",
+      "importExport": "Importar / Exportar"
+    },
+    "importExport": {
+      "available": "Disponível",
+      "experimental": "Experimental",
+      "comingSoon": "Brevemente",
+      "loading": "A carregar...",
+      "runInBackground": "Fechar (a importação continua em segundo plano)",
+      "runInBackgroundTitle": "Fechar esta caixa de diálogo. A importação continua em segundo plano.",
+      "stepAnnouncement": "Passo {current} de {total}: {name}",
+      "steps": {
+        "source": "Origem",
+        "mode": "Modo",
+        "confirm": "Confirmar",
+        "progress": "Progresso",
+        "done": "Concluído"
+      },
+      "import": {
+        "sectionTitle": "Importação"
+      },
+      "export": {
+        "sectionTitle": "Exportação",
+        "cardTitle": "Exportar deteções",
+        "cardDescription": "Exporte os seus dados de deteção para CSV, JSON ou outros formatos."
+      },
+      "birdnetPi": {
+        "cardTitle": "BirdNET-Pi",
+        "cardDescription": "Importe o histórico de deteções a partir de uma base de dados SQLite do BirdNET-Pi (birds.db).",
+        "startButton": "Importar do BirdNET-Pi",
+        "wizardTitle": "Importar do BirdNET-Pi",
+        "experimentalNotice": "A importação do BirdNET-Pi é experimental e ainda pode apresentar problemas.",
+        "reportBug": "Relatar um erro no GitHub"
+      },
+      "birdsDbUpload": {
+        "cardTitle": "Carregamento de birds.db",
+        "cardDescription": "Carregue um ficheiro de base de dados do BirdNET-Pi diretamente a partir do seu navegador."
+      },
+      "activity": {
+        "sectionTitle": "Atividade de importação",
+        "empty": {
+          "title": "Sem atividade de importação",
+          "description": "Quando uma importação estiver em curso, o seu progresso aparece aqui."
+        },
+        "openWizard": "Abrir o assistente de importação"
+      },
+      "wizard": {
+        "stepsLabel": "Passos do assistente de importação"
+      },
+      "sourceAccess": {
+        "pathLabel": "Caminho para birds.db (relativo à raiz de montagem)",
+        "pathHelpText": "Introduza o caminho relativo à raiz da montagem de suportes externos, por ex. birdnet-pi/birds.db",
+        "pathRequiredReason": "Introduza o caminho para birds.db para continuar",
+        "mountDescription": "A sua base de dados do BirdNET-Pi deve estar na montagem de suportes externos.",
+        "mountRoot": "Raiz de montagem",
+        "nativeTitle": "É necessária uma montagem de suportes externos",
+        "nativeDescription": "A importação do BirdNET-Pi requer uma montagem de suportes externos, que só está disponível quando o BirdNET-Go é executado num contentor. As instalações nativas (sem contentor) não podem utilizar esta funcionalidade de importação.",
+        "nativeHowTo": "Para importar do BirdNET-Pi, execute o BirdNET-Go num contentor com o diretório de dados do BirdNET-Pi montado como volume de suportes externos.",
+        "missingTitle": "Montagem de suportes externos não encontrada",
+        "missingDescription": "O BirdNET-Go está a ser executado num contentor, mas a montagem de suportes externos não está acessível. Siga os passos abaixo para a configurar.",
+        "setupStepsLabel": "Passos de configuração",
+        "recheckButton": "Verificar novamente",
+        "recheckHint": "Depois de concluir os passos de configuração, clique em Verificar novamente para continuar."
+      },
+      "source": {
+        "title": "Onde estão os seus dados do BirdNET-Pi?",
+        "candidatesIntro": "Encontrámos estas bases de dados do BirdNET-Pi:",
+        "selectButton": "Selecionar",
+        "useThisButton": "Utilizar esta",
+        "detectionsSummary": "{count} deteções, até {date}",
+        "kindLocal": "Neste dispositivo",
+        "kindRemovable": "Unidade removível",
+        "kindNetwork": "Localização de rede",
+        "unreadableTitle": "Encontrada, mas o BirdNET-Go não a consegue ler",
+        "unreadableOwner": "Estes dados pertencem a outro utilizador ({owner}).",
+        "manualEntryLink": "Não a vê? Introduza a localização manualmente",
+        "manualEntryLabel": "Localização da base de dados do BirdNET-Pi",
+        "manualValidating": "A verificar...",
+        "manualValid": "Encontradas {count} deteções.",
+        "manualNotFound": "Não encontrámos nenhum ficheiro aí.",
+        "manualUnreadable": "Encontrámo-la, mas o BirdNET-Go ainda não a consegue ler.",
+        "manualInvalid": "Esse ficheiro não é uma base de dados do BirdNET-Pi.",
+        "zeroTitle": "Não a conseguimos encontrar automaticamente",
+        "zeroDescription": "Ligue a unidade que contém os seus dados do BirdNET-Pi e verifique novamente.",
+        "checkAgainButton": "Verificar novamente",
+        "showCommandsLabel": "Mostrar comandos",
+        "containerUnreadableHint": "O BirdNET-Go (a ser executado como UID {uid}) não consegue ler este ficheiro. Corrija as permissões no anfitrião para que o UID {uid} o possa ler e, em seguida, verifique novamente.",
+        "elevation": {
+          "copying": "A copiar os seus dados...",
+          "passwordTitle": "O BirdNET-Go precisa de permissão para ler estes dados",
+          "passwordDescription": "Introduza a palavra-passe de administrador deste dispositivo para permitir que o BirdNET-Go copie os dados.",
+          "passwordLabel": "Palavra-passe de administrador",
+          "passwordRequiredReason": "Introduza a palavra-passe de administrador para continuar",
+          "httpWarning": "Esta página não utiliza HTTPS. A palavra-passe de administrador será enviada sem encriptação pela sua rede local. Continue apenas numa rede fiável.",
+          "submitButton": "Copiar e continuar",
+          "fallbackTitle": "Execute este comando para conceder acesso",
+          "fallbackDescription": "O BirdNET-Go não consegue elevar os privilégios automaticamente. Execute o comando abaixo e, em seguida, clique em Verificar novamente.",
+          "disabledNote": "A elevação de privilégios na aplicação está desativada. Utilize o comando abaixo para conceder acesso.",
+          "failed": "Não funcionou. Verifique a palavra-passe e tente novamente, ou utilize o comando abaixo."
+        }
+      },
+      "mode": {
+        "label": "O que pretende importar?",
+        "dbOnly": {
+          "label": "Apenas base de dados",
+          "description": "Importe os registos de deteção a partir de birds.db. Os clipes de áudio não são importados."
+        },
+        "dbAudio": {
+          "label": "Base de dados + clipes de áudio",
+          "description": "Importe os registos de deteção e as gravações de áudio associadas.",
+          "badge": "Não disponível",
+          "disabledReason": "A importação de clipes de áudio ainda não está disponível. Apenas é suportada a importação da base de dados."
+        }
+      },
+      "confirm": {
+        "description": "Reveja as suas definições de importação antes de começar. As deteções importadas são marcadas com a origem birdnet-pi e os duplicados são ignorados automaticamente.",
+        "source": "Caminho de origem",
+        "mode": "Modo de importação",
+        "tagging": "Etiqueta de origem",
+        "taggingValue": "birdnet-pi (aplicada automaticamente)",
+        "deduplicationNote": "As deteções duplicadas (mesma espécie, hora e data já presentes na base de dados) são ignoradas automaticamente. As contagens exatas serão mostradas em direto durante a importação.",
+        "startButton": "Iniciar importação"
+      },
+      "progress": {
+        "label": "Progresso da importação",
+        "runningLabel": "Importação em curso",
+        "progressLabel": "{percent}% concluído",
+        "cancelButton": "Cancelar",
+        "cancellingLabel": "A cancelar...",
+        "cancelledMessage": "A importação foi cancelada.",
+        "processed": "Processadas",
+        "inserted": "Inseridas",
+        "skipped": "Ignoradas",
+        "errors": "Erros",
+        "phase": {
+          "validate": "A validar",
+          "dedup": "A remover duplicados",
+          "import": "A importar"
+        }
+      },
+      "done": {
+        "successTitle": "Importação concluída",
+        "successDescription": "As suas deteções do BirdNET-Pi foram importadas com êxito.",
+        "cancelledTitle": "Importação cancelada",
+        "cancelledDescription": "A importação foi cancelada antes de concluir.",
+        "errorTitle": "A importação falhou",
+        "interruptedTitle": "Importação interrompida",
+        "interruptedDescription": "A ligação ao servidor foi perdida durante a importação, pelo que o seu resultado final é desconhecido. Verifique as suas deteções e reinicie a importação se necessário.",
+        "viewDetectionsLink": "Ver deteções importadas",
+        "partialInserted": "{count} deteções foram importadas antes do cancelamento.",
+        "importAnother": "Importar outra"
+      },
+      "errors": {
+        "loadFailed": "Não foi possível carregar o estado da importação. Tente novamente.",
+        "mediaLoadFailed": "Não foi possível verificar os suportes externos. Tente novamente.",
+        "alreadyRunning": "Já está em curso uma importação. Aguarde que termine.",
+        "startFailed": "Não foi possível iniciar a importação. Tente novamente.",
+        "cancelFailed": "Não foi possível cancelar a importação.",
+        "importFailed": "A importação falhou. Verifique a sua configuração e tente novamente."
+      }
     },
     "database": {
       "title": "Gestão da base de dados",
@@ -1202,7 +1453,7 @@
           "avgWait": "Espera média",
           "busyTimeouts": "Timeouts de ocupado",
           "walSize": "Tamanho WAL",
-          "checkpoints": "Checkpoints",
+          "checkpoints": "Pontos de verificação",
           "freelistPages": "Páginas livres",
           "cacheSize": "Tamanho da cache"
         },
@@ -1322,10 +1573,10 @@
           "targetV2": "Destino (V2)",
           "recordsLabel": "Registos",
           "sizeLabel": "Tamanho",
-          "prerequisitesNotMet": "Pré-requisitos não atendidos — resolva os problemas críticos abaixo",
+          "prerequisitesNotMet": "Pré-requisitos não atendidos - resolva os problemas críticos abaixo",
           "validatingTitle": "Validando dados",
           "validatingBody": "Comparando {count} registos legados com o banco de dados V2...",
-          "dirtyRecordsCatchup": "{count} registos pendentes — tentando reconciliação",
+          "dirtyRecordsCatchup": "{count} registos pendentes - tentando reconciliação",
           "cutoverTitle": "Finalizando transição",
           "cutoverBody": "Finalizando transição para o banco de dados V2...",
           "migratingPhase": "Migrando {phase}",
@@ -1334,7 +1585,7 @@
           "percentComplete": "{percent}% concluído",
           "recordsPerSec": "{rate} registos/s",
           "calculating": "Calculando...",
-          "dirtyWriteFailed": "{count} registos falharam ao gravar — serão reconciliados durante a validação"
+          "dirtyWriteFailed": "{count} registos falharam ao gravar - serão reconciliados durante a validação"
         },
         "details": {
           "title": "Detalhes do banco de dados",
@@ -1484,6 +1735,136 @@
         }
       }
     },
+    "inference": {
+      "title": "Modelos de IA e Inferência",
+      "loading": "Carregando o status da inferência",
+      "error": "Não foi possível carregar o status da inferência",
+      "vad": {
+        "section": "Proteção de privacidade",
+        "title": "Silero VAD",
+        "active": "Ativo",
+        "activeHelp": "O modelo de deteção de voz está carregado e a avaliar áudio.",
+        "idle": "Inativo",
+        "idleHelp": "Ativado e pronto; o modelo carrega ao avaliar o primeiro fragmento de áudio.",
+        "disabled": "Desativado",
+        "disabledHelp": "A proteção de privacidade está desligada nas definições do filtro de privacidade.",
+        "unavailable": "Sem modelo",
+        "unavailableHelp": "Nenhum modelo de deteção de voz disponível nesta versão. Defina o caminho do modelo VAD nas definições do filtro de privacidade, ou use uma versão com o modelo integrado.",
+        "description": "Silero VAD é um modelo acústico especializado que detecta a fala humana. Alimenta o filtro de privacidade, descartando o áudio quando a fala está presente para que as vozes fiquem fora das suas gravações.",
+        "threshold": "Limiar",
+        "speechHits": "Deteções de voz",
+        "recentTitle": "Fala recente",
+        "recentEmpty": "Nenhuma fala detectada ainda",
+        "colWhen": "Quando",
+        "colProbability": "Probabilidade",
+        "colSource": "Fonte"
+      },
+      "sectionHardware": "Hardware",
+      "sectionBackends": "Mecanismos de Inferência",
+      "sectionModels": "Modelos",
+      "noModels": "No models are currently loaded",
+      "architecture": "Arquitetura",
+      "cpu": "CPU",
+      "environment": "Ambiente",
+      "fp16": "FP16",
+      "fp16Supported": "FP16 suportado",
+      "fp16Unsupported": "FP16 não suportado",
+      "advanced": "Avançado",
+      "capabilities": "Capacidades",
+      "capabilitiesHelp": "Tags de hardware usadas para corresponder esta máquina com as compilações de modelo disponíveis.",
+      "backendTflite": "TensorFlow Lite",
+      "backendOnnx": "ONNX Runtime",
+      "backendOpenvino": "OpenVINO",
+      "available": "Disponível",
+      "notAvailable": "Não disponível",
+      "active": "Ativo",
+      "inactive": "Inativo",
+      "initialized": "Inicializado",
+      "version": "Versão",
+      "devices": "Dispositivos",
+      "board": "Placa",
+      "soc": "SoC",
+      "memory": "Memória",
+      "cores": "Núcleos",
+      "gpu": "Gráficos",
+      "gpuReachable": "Acessível",
+      "gpuNotReachable": "Inacessível",
+      "gpuReasonRenderNodeUnavailable": "Nenhum nó de dispositivo GPU é visível para o servidor. No Docker, mapeie /dev/dri para o contêiner; em uma instalação nativa, verifique se o driver gráfico está carregado.",
+      "gpuReasonRenderNodePermission": "O nó do dispositivo GPU não pode ser aberto. Ou a conta em que o BirdNET-Go é executado precisa de acesso ao grupo do dispositivo, geralmente 'render', ou o contêiner recebeu o dispositivo com -v em vez de --device, o que não concede acesso a ele.",
+      "gpuReasonNoRuntime": "No momento, o BirdNET-Go acelera a inferência apenas em gráficos Intel, portanto, esta placa não será usada.",
+      "gpuReasonUnknown": "Esta GPU não pode ser usada para inferência nesta compilação.",
+      "stock": "Padrão",
+      "custom": "Personalizado",
+      "sampleRate": "Taxa de amostragem",
+      "clipLength": "Duração do segmento",
+      "species": "Espécies",
+      "invocations": "Segmentos analisados",
+      "avgLatency": "Latência média",
+      "maxLatency": "Latência máxima",
+      "rtf": "RTF",
+      "rtfLabel": "Fator tempo real",
+      "approxRam": "RAM aprox. do host (RSS)",
+      "approxRamTooltip": "RAM aproximada do host (RSS) medida no carregamento do modelo. Exclui a VRAM da GPU e pode ser distorcida por arenas de memória de tempo de execução compartilhadas e recuperação de páginas do sistema operacional.",
+      "latencyChart": "Latência (ms)",
+      "rtfChart": "Fator tempo real",
+      "sources": "Fontes de áudio",
+      "noSources": "Nenhuma fonte conectada",
+      "primaryFallback": "primária (reserva)",
+      "sourceNotRunning": "não está a analisar",
+      "sourceNotRunningTooltip": "Esta fonte está atribuída ao modelo nas configurações, mas o seu áudio não está a chegar ao modelo, pelo que não produz deteções. Verifique se a fonte de áudio está conectada e a enviar áudio.",
+      "modelNotAnalyzingTooltip": "Uma ou mais fontes de áudio atribuídas a este modelo não lhe estão a enviar áudio, pelo que não produz deteções. Consulte as fontes listadas abaixo.",
+      "sourcesDegraded": "{count} de {total} fontes indisponíveis",
+      "sourcesDegradedTooltip": "Algumas fontes de áudio deste modelo, mas não todas, estão indisponíveis, pelo que continua a analisar através das que estão operacionais. A fonte indisponível específica e como resolver o problema estão listadas abaixo.",
+      "notMeasured": "n/d",
+      "unitMs": "ms",
+      "unitKhz": "kHz",
+      "unitSec": "s",
+      "sectionAudio": "Áudio",
+      "queueDepth": "Profundidade da fila",
+      "queueDepthChart": "Profundidade da fila",
+      "droppedChunks": "Fragmentos descartados",
+      "queueCapacity": "Capacidade",
+      "lastSeen": "Visto por último",
+      "lastSeenNever": "Ainda não há detecções",
+      "deviceHelp": "O dispositivo de computação no qual este modelo executa a inferência (CPU, GPU ou desconhecido).",
+      "paused": "Pausado",
+      "pausedScheduleHelp": "Este modelo só funciona de acordo com um cronograma e está atualmente pausado, portanto não está processando áudio.",
+      "activityPaused": "Pausado por agendamento",
+      "lastHeard": "Ouvido pela última vez",
+      "lastHeardHint": "Previsões recentes acima do limiar, para diagnóstico. Inclui resultados não aviários e fora do alcance que não são guardados como deteções.",
+      "lastHeardNever": "Nada ouvido ainda",
+      "confidenceColumn": "Conf.",
+      "heardWhen": "Quando",
+      "coDetectedColumn": "Também",
+      "coDetectedHelp": "Outros modelos que detetaram esta espécie em {seconds}s",
+      "outOfRangeHelp": "Fora do filtro de área (mostrado para diagnóstico, não guardado como deteção)",
+      "peak": "pico",
+      "activityActive": "Inferência ativa",
+      "activityIdle": "Inativo",
+      "throughput": "Taxa de transferência",
+      "throughputUnit": "/s",
+      "throughputChart": "Taxa de transferência (/s)",
+      "errorRate": "Taxa de erro",
+      "loadFailures": "Falhas de carregamento",
+      "rtfHelp": "Fator tempo real: tempo de inferência dividido pela duração do clipe. Menos de 1.0 significa que o modelo analisa um segmento mais rápido do que o tempo real (acompanhando); mais de 1.0 significa que está ficando para trás.",
+      "queueDepthHelp": "Segmentos de áudio aguardando análise. Permanece próximo de zero quando a análise acompanha; um número crescente significa que está ficando para trás.",
+      "queueCapacityHelp": "Número máximo de segmentos que a fila pode armazenar antes que o novo áudio seja descartado.",
+      "droppedChunksHelp": "Fragmentos de áudio descartados porque a fila estava cheia. Deve permanecer em zero.",
+      "throughputHelp": "Segmentos analisados por segundo por este modelo.",
+      "errorRateHelp": "Parcela de tentativas de análise que falharam.",
+      "loadFailuresHelp": "Número de vezes que este modelo falhou ao carregar.",
+      "fp16Help": "Ponto flutuante de 16 bits. O hardware que o suporta pode executar alguns modelos mais rapidamente e com menos memória.",
+      "invocationsHelp": "Total de segmentos de áudio que este modelo analisou desde a inicialização.",
+      "noModelsHint": "Nenhuma fonte de áudio configurada ainda?",
+      "noModelsHintLink": "Configurar fontes de áudio",
+      "modelFailing": "todas as análises falham",
+      "lastSuccess": "Último sucesso",
+      "lastSuccessHelp": "Quando este modelo analisou áudio sem erros pela última vez.",
+      "lastSuccessNever": "Nenhum desde que o modelo foi carregado",
+      "modelFailingHelp": "{reason} Experimente outra versão deste modelo em Configurações > Análise > Modelos, ou verifique o backend e a precisão mostrados acima.",
+      "modelFailingReasonNonFinite": "Todas as análises recentes falharam porque o modelo devolveu pontuações inválidas (NaN ou infinitas), pelo que não deteta nada.",
+      "modelFailingReasonError": "Todas as análises recentes falharam porque a inferência devolveu um erro, pelo que o modelo não deteta nada."
+    },
     "metrics": {
       "cpu": "CPU",
       "memory": "Memória",
@@ -1539,8 +1920,54 @@
     "reattach": "Reconectar"
   },
   "analytics": {
-    "title": "Visão geral",
+    "hub": {
+      "tabs": {
+        "patterns": "Padrões de atividade",
+        "trends": "Tendências",
+        "biodiversity": "Biodiversidade",
+        "quality": "Revisão e precisão",
+        "summary": "Resumo",
+        "nocturnal": "Atividade noturna",
+        "weather": "Clima",
+        "soundscape": "Paisagem sonora"
+      },
+      "aria": {
+        "tabs": "Seções de análise"
+      },
+      "controls": {
+        "source": "Fonte",
+        "sourceAll": "Todas as fontes",
+        "sourceLoading": "Carregando fontes de áudio...",
+        "sourceNone": "Nenhuma fonte de áudio com detecções ainda.",
+        "sourceNotApplicable": "Os gráficos nesta seção não filtram por fonte.",
+        "speciesNotApplicable": "Os gráficos desta seção não filtram por espécie."
+      },
+      "card": {
+        "error": "Não foi possível carregar este gráfico",
+        "retry": "Tentar novamente",
+        "notEnoughData": "Ainda não há dados suficientes",
+        "notEnoughDataHint": "Este gráfico precisa de pelo menos {min} pontos de dados. Continue gravando e volte em breve.",
+        "export": "Exportar",
+        "exportComingSoon": "A exportação CSV chegará em breve."
+      }
+    },
     "loadingError": "Falha ao carregar alguns dados analíticos. Por favor, tente novamente mais tarde.",
+    "comingSoon": {
+      "badge": "Em breve",
+      "plannedTitle": "Funcionalidades previstas",
+      "weather": {
+        "description": "Atividade das aves rastreada em relação às condições meteorológicas locais. Esta vista correlacionará as deteções com temperatura, vento e chuva.",
+        "feature1": "Correlacionar deteções com temperatura, vento e precipitação",
+        "feature2": "Ver como as frentes meteorológicas alteram a atividade das espécies",
+        "feature3": "Comparar a atividade sazonal com dados climáticos históricos"
+      },
+      "soundscape": {
+        "description": "Uma análise do caráter acústico global do ambiente, utilizando índices acústicos para resumir a diversidade da paisagem sonora ao longo do tempo.",
+        "feature1": "Índices acústicos que resumem a complexidade da paisagem sonora",
+        "feature2": "Rastrear a biodiversidade através do som ambiente ao longo do tempo",
+        "feature3": "Identificar coros do amanhecer e do entardecer no registo acústico"
+      }
+    },
     "stats": {
       "totalDetections": "Total de detecções",
       "uniqueSpecies": "Espécies únicas",
@@ -1619,6 +2046,7 @@
         "dateTime": "Data e hora",
         "species": "Espécie",
         "confidence": "Confiança",
+        "source": "Fonte",
         "timeOfDay": "Hora do dia"
       },
       "noRecentDetections": "Nenhuma detecção recente encontrada",
@@ -1647,7 +2075,6 @@
       }
     },
     "advanced": {
-      "title": "Análises avançadas",
       "chartControls": "Controles do gráfico",
       "dateRange": "Intervalo de datas",
       "chartOptions": "Opções do gráfico",
@@ -1671,11 +2098,11 @@
       "charts": {
         "timeOfDay": {
           "title": "Padrões de detecção por hora do dia",
-          "description": "Mostra contagens médias de detecção ao longo do dia para as espécies selecionadas",
+          "description": "Deteções médias por dia em cada hora, ao longo do intervalo de datas e das espécies selecionadas",
           "noData": "Nenhum dado de hora do dia disponível",
           "noDataHint": "Selecione espécies e um intervalo de datas para visualizar padrões",
           "axisTime": "Hora do dia",
-          "axisCount": "Contagem de detecções"
+          "axisCount": "Deteções médias / dia"
         },
         "dailyTrend": {
           "title": "Tendências de detecção de espécies",
@@ -1693,6 +2120,126 @@
           "noDataHint": "Selecione um intervalo de datas para visualizar tendências de diversidade de espécies",
           "axisDate": "Data",
           "axisUniqueSpecies": "Espécies únicas"
+        },
+        "accumulation": {
+          "title": "Curva de Acúmulo de Espécies",
+          "description": "Cumulative number of distinct species detected within the selected period. The curve climbs as new species appear and flattens toward an asymptote once the common ones have been recorded; a still-rising tail means more species are likely waiting to be found.",
+          "noData": "Nenhum dado de acúmulo de espécies disponível",
+          "noDataHint": "Selecione um intervalo de datas maior para observar a lista de espécies se formar ao longo do tempo",
+          "ariaLabel": "Curva de acúmulo de espécies: espécies distintas cumulativas detectadas durante o período",
+          "axisDate": "Data",
+          "axisSpecies": "Espécies cumulativas",
+          "totalSpecies": "{species} espécies",
+          "tooltipCumulative": "Espécies cumulativas",
+          "tooltipNew": "Nova no período",
+          "summary": "Acúmulo cumulativo de espécies ao longo de {days} dias, atingindo {species} espécies distintas até o final do período."
+        },
+        "yearOverYear": {
+          "title": "Rastreador Ano a Ano",
+          "description": "Detecções cumulativas este ano em comparação com as mesmas datas do calendário do ano passado. A faixa sombreada é a lacuna contínua entre os dois; a linha deste ano ficar acima da do ano passado significa que você está à frente do ritmo do ano passado.",
+          "noData": "Nenhum dado ano a ano disponível",
+          "noDataHint": "As detecções deste ano e do ano passado se acumulam aqui à medida que o ano avança",
+          "ariaLabel": "Rastreador ano a ano: detecções cumulativas este ano em comparação com o mesmo período do ano passado",
+          "axisDate": "Data",
+          "axisCount": "Detecções cumulativas",
+          "legendThis": "{year} (este ano)",
+          "legendLast": "{year} (ano passado)",
+          "tooltipDelta": "Diferença",
+          "summary": "Ano a ano: até {monthDay}, {currentYear} tem {thisYear} detecções cumulativas em comparação com {lastYear} para {previousYear} (uma diferença de {delta})."
+        },
+        "phenology": {
+          "title": "Fenologia de Chegada e Partida",
+          "description": "Primeira e última detecção de cada espécie no período selecionado, desenhadas como barras de residência para as espécies mais detectadas. Leia de cima para baixo na ordem de chegada para ver quem chega primeiro e quem fica até mais tarde na temporada.",
+          "noData": "Nenhum dado de fenologia disponível",
+          "noDataHint": "Selecione um intervalo de datas maior para ver quando as espécies chegam e partem",
+          "ariaLabel": "Fenologia de chegada e partida: barras de residência mostrando a duração da primeira à última detecção de cada espécie",
+          "axisDate": "Data",
+          "summary": "Tempos de residência de chegada e partida para {species} espécies no período selecionado.",
+          "tooltipFirst": "Primeira detecção",
+          "tooltipLast": "Última detecção",
+          "tooltipResidency": "Residência",
+          "tooltipCount": "Detecções",
+          "residencyDays": "{days} dias"
+        },
+        "heatmap": {
+          "title": "Mapa de Calor de Atividade Sazonal",
+          "description": "Detection density by date and time of day, revealing migration waves and dawn-chorus drift",
+          "noData": "Nenhum dado de atividade disponível",
+          "noDataHint": "Select a date range to view seasonal activity patterns",
+          "axisDate": "Data",
+          "axisTime": "Hora do Dia",
+          "tooltipTime": "Hora",
+          "tooltipCount": "Detecções",
+          "legendLess": "Menos",
+          "legendMore": "Mais ({max})",
+          "ariaLabel": "Mapa de calor de atividade sazonal: densidade de detecção por data e hora do dia",
+          "summary": "{total} detecções em {days} dias. Mais movimentado por volta das {time} em {date}."
+        },
+        "ridgeline": {
+          "title": "Quem canta quando",
+          "description": "Hour-of-day activity for the most-detected species, sorting dawn singers from all-day and nocturnal birds",
+          "noData": "Nenhum dado de atividade de espécie disponível",
+          "noDataHint": "Select a wider date range to compare species activity patterns",
+          "ariaLabel": "Gráfico de quem canta quando: distribuição da atividade por hora do dia por espécie",
+          "axisTime": "Hora do dia",
+          "note": "Mostrando as {count} espécies com maior volume de detecção",
+          "tooltipDetections": "Detecções",
+          "tooltipPeak": "Pico",
+          "summary": "Atividade por hora do dia para {count} espécies. Mais ativo: {species} por volta de {time}."
+        },
+        "succession": {
+          "title": "Sucessão Acústica",
+          "description": "How the soundscape's top species hand off through the day, shown as stacked bands of hourly detections from pre-dawn through night",
+          "noData": "Nenhum dado de sucessão acústica disponível",
+          "noDataHint": "Select a wider date range to see how species hand off through the day",
+          "ariaLabel": "Acoustic succession streamgraph: stacked hour-of-day detections for the top species",
+          "axisTime": "Hora do Dia",
+          "note": "Atividade horária combinada das {count} principais espécies por volume de detecção",
+          "tooltipDetections": "Detecções",
+          "tooltipPeak": "Pico",
+          "summary": "Sucessão por hora do dia para {count} espécies. Mais ativas: {species} por volta das {time}."
+        },
+        "dawnOnset": {
+          "title": "Início do Coro do Amanhecer",
+          "description": "Quando o coro matinal começa a cada dia em relação ao amanhecer civil, isolando a mudança sazonal do horário do relógio",
+          "noData": "Nenhum dado de coro do amanhecer disponível",
+          "noDataHint": "Select a wider date range to track how the dawn chorus shifts across the seasons",
+          "ariaLabel": "Rastreador de início do coro do amanhecer: início do coro diário em relação ao amanhecer civil",
+          "axisDate": "Data",
+          "axisOnset": "Minutos desde o amanhecer civil",
+          "civilDawn": "Amanhecer civil",
+          "tooltipOnset": "Início",
+          "tooltipOnsetAfter": "{minutes} min após o amanhecer civil",
+          "tooltipOnsetBefore": "{minutes} min antes do amanhecer civil",
+          "tooltipOnsetAt": "No amanhecer civil",
+          "tooltipCount": "Detecções",
+          "summary": "Início do coro do amanhecer em relação ao amanhecer civil ao longo de {days} dias ({plotted} com um início mensurável)."
+        },
+        "nocturnal": {
+          "title": "Relógio de Atividade Noturna",
+          "description": "Detecções ao redor do relógio de 24 horas com as horas do dia sombreadas, destacando a atividade noturna",
+          "noData": "Nenhum dado de atividade disponível",
+          "noDataHint": "Selecione um intervalo de datas mais amplo ou um período mais ativo para ver o padrão de atividade diário",
+          "ariaLabel": "Relógio de atividade noturna: detecções por hora do dia com sombreamento diurno",
+          "axisHour": "Hora do dia",
+          "tooltipHour": "{start} a {end}",
+          "tooltipCount": "Detecções",
+          "summary": "Atividade de detecção por hora do dia ({total} detecções, mais ativas ao redor das {peak}). As horas do dia são sombreadas.",
+          "legendDay": "Dia",
+          "legendTwilight": "Crepúsculo",
+          "legendNight": "Noite"
+        },
+        "confidence": {
+          "title": "Distribuição de confiança",
+          "description": "Quão confiante o modelo está por espécie, para que você possa identificar as aves nas quais ele mais tem dúvidas",
+          "noData": "Nenhum dado de confiança disponível",
+          "noDataHint": "Selecione um intervalo de datas mais amplo para comparar a confiança do modelo entre as espécies",
+          "ariaLabel": "Distribuição de confiança: histograma de pontuações de confiança de detecção por espécie",
+          "axisLabel": "Confiança",
+          "note": "Mostrando as {count} espécies com maior volume de detecção",
+          "tooltipCount": "Detecções",
+          "tooltipPeak": "Confiança máxima",
+          "summary": "Distribuição de confiança de detecção para {count} espécies. {species} agrupa-se em torno de uma confiança de {time}."
         },
         "tooltips": {
           "date": "Data",
@@ -1719,6 +2266,14 @@
     },
     "errors": {
       "loadFailed": "Falha ao carregar os dados de análise. Tente novamente."
+    },
+    "timeOfDayPeriods": {
+      "night0to4": "Noite (0-4)",
+      "dawn5to8": "Amanhecer (5-8)",
+      "morning9to11": "Manhã (9-11)",
+      "afternoon12to16": "Tarde (12-16)",
+      "evening17to19": "Anoitecer (17-19)",
+      "night20to23": "Noite (20-23)"
     }
   },
   "settings": {
@@ -1824,7 +2379,7 @@
           "title": "Filtro de Falsos Positivos",
           "description": "Reduz detecções falsas exigindo múltiplas confirmações em segmentos de áudio sobrepostos",
           "level": {
-            "label": "Nível do Filtro"
+            "label": "Intensidade do Filtro de Falsos Positivos"
           },
           "detectionCount": "{count} confirmações necessárias. {description}",
           "levels": {
@@ -1854,7 +2409,19 @@
           "description": "Limita a detecção a espécies prováveis em sua região geográfica",
           "stationLocation": {
             "label": "Localização da estação",
-            "helpText": "Localização da estação, usada para dados meteorológicos e para limitar as espécies de pássaros àquelas prováveis na região."
+            "helpText": "Localização da estação, usada para dados meteorológicos e para limitar as espécies de pássaros àquelas prováveis na região.",
+            "automaticLocation": "Localização automática",
+            "useCurrentLocation": "Usar localização do navegador",
+            "locationHelp": "Preenche as coordenadas usando a localização deste navegador.",
+            "locating": "A determinar a localização...",
+            "accuracy": "Precisão estimada: num raio de {accuracy} m",
+            "locationDetected": "Localização do navegador detetada.",
+            "geolocationUnsupported": "Este navegador não suporta a localização do dispositivo. Introduza as coordenadas manualmente ou use o mapa.",
+            "geolocationRequiresHttps": "A localização do navegador requer HTTPS ou localhost. Introduza as coordenadas manualmente ou use o mapa.",
+            "geolocationDenied": "A permissão de localização foi negada. Introduza as coordenadas manualmente ou use o mapa.",
+            "geolocationUnavailable": "O dispositivo não conseguiu determinar a localização. Introduza as coordenadas manualmente ou use o mapa.",
+            "geolocationTimedOut": "O pedido de localização excedeu o tempo limite. Tente novamente, introduza as coordenadas manualmente ou use o mapa.",
+            "geolocationFailed": "Não foi possível determinar a localização do dispositivo. Introduza as coordenadas manualmente ou use o mapa."
           },
           "latitude": {
             "label": "Latitude",
@@ -2110,9 +2677,9 @@
           "label": "Idioma",
           "helpText": "Idioma para nomes comuns de espécies traduzidos."
         },
-        "tensorflowThreads": {
-          "label": "Threads de CPU do TensorFlow",
-          "helpText": "Número de threads de CPU. Defina como 0 para usar todos os threads disponíveis."
+        "inferenceThreads": {
+          "label": "Threads de CPU para inferência",
+          "helpText": "Número de threads de CPU utilizados na inferência do modelo. Defina como 0 para usar todos os threads disponíveis. Não tem efeito em modelos executados numa GPU."
         }
       },
       "errors": {
@@ -2276,7 +2843,8 @@
           "detectionPath": "Caminho relativo para a detecção (ex., \"/ui/detections/1234\")",
           "detectionUrl": "URL completa para a detecção",
           "imageUrl": "Link para imagem da espécie",
-          "daysSinceFirstSeen": "Número de dias desde a primeira detecção"
+          "daysSinceFirstSeen": "Número de dias desde a primeira detecção",
+          "daysSinceLastSeen": "Número de dias desde a última detecção"
         }
       },
       "testNotification": {
@@ -2391,6 +2959,7 @@
             "shoutrrrDocs": "https://github.com/nicholas-fedor/shoutrrr?tab=readme-ov-file#supported-services"
           },
           "saveButton": "Salvar provedor",
+          "saveWaitingNtfyCheck": "Aguardando a conclusão da verificação de conexão do ntfy",
           "savingButton": "Salvando...",
           "cancelButton": "Cancelar",
           "testButton": "Testar",
@@ -2459,9 +3028,10 @@
             "testConnection": "Testar ligação",
             "connectionOk": {
               "https": "HTTPS funciona",
-              "http": "HTTP funciona — o servidor não usa HTTPS"
+              "http": "HTTP funciona - o servidor não usa HTTPS"
             },
-            "connectionFailed": "Não foi possível ligar — verifique o nome do host e o estado do servidor",
+            "connectionFailed": "Não foi possível ligar - verifique o nome do host e o estado do servidor",
+            "checkError": "Não foi possível verificar o servidor - verifique o endereço ou recarregue a página e tente novamente",
             "auth": {
               "label": "Autenticação (opcional)",
               "username": {
@@ -2592,7 +3162,11 @@
         "enable": "Ativar filtragem de privacidade",
         "disabled": "Filtragem de privacidade está desativada",
         "confidenceLabel": "Limiar de confiança para detecção humana",
-        "confidenceHelp": "Defina o nível de confiança para detecção de voz humana, valores mais baixos tornam o filtro mais sensível"
+        "confidenceHelp": "Defina o nível de confiança para detecção de voz humana, valores mais baixos tornam o filtro mais sensível",
+        "vadEnable": "Ativar Proteção de Privacidade (Silero VAD)",
+        "vadHelp": "Executa um modelo neural dedicado de deteção de voz juntamente com o classificador para uma filtragem de voz robusta. Consome recursos de sistema adicionais (aprox. 20-30 MB de RAM e inferência de CPU por segmento).",
+        "vadThresholdLabel": "Limiar de Proteção de Privacidade",
+        "vadThresholdHelp": "Limiar de sensibilidade para o detetor de atividade de voz (predefinido 0,35). Valores mais baixos tornam o filtro mais sensível a voz baixa ou distante."
       },
       "falsePositivePrevention": {
         "title": "Prevenção de falsos positivos",
@@ -2712,7 +3286,7 @@
             "label": "Nome do dispositivo",
             "helpText": "O nome base para dispositivos conforme aparecem no Home Assistant. Cada fonte de áudio terá seu próprio dispositivo vinculado a este dispositivo principal do BirdNET-Go."
           },
-          "sensorsNote": "<strong>Sensores criados:</strong> Para cada fonte de áudio, o Home Assistant receberá: Última espécie, Confiança, Nome científico e Nível de som (se ativado). O dispositivo ponte inclui status de disponibilidade online/offline.",
+          "sensorsNote": "<strong>Sensores criados:</strong> Para cada fonte de áudio, o Home Assistant receberá: Última espécie, Confiança, Nome científico e Nível de som (se ativado). O dispositivo ponte inclui status de disponibilidade online/offline. Os sensores de deteção de cada fonte leem o tópico MQTT próprio dessa fonte, &lt;base_topic&gt;/sources/&lt;source_id&gt;, e o seu sensor de Nível de som lê o subtópico &lt;base_topic&gt;/sources/&lt;source_id&gt;/soundlevel, de modo que uma deteção de uma fonte nunca reinicia os sensores de outra fonte.",
           "discovery": {
             "button": "Enviar Discovery",
             "success": "Mensagens de descoberta enviadas ao Home Assistant",
@@ -2758,7 +3332,8 @@
             "none": "Nenhum",
             "yrno": "Yr.no",
             "openweather": "OpenWeather",
-            "wunderground": "Weather Underground"
+            "wunderground": "Weather Underground",
+            "pirateweather": "Pirate Weather"
           }
         },
         "wunderground": {
@@ -2779,6 +3354,16 @@
             "helpText": "Selecione unidades para temperatura e velocidade do vento (m = Métrico, e = Imperial, h = Híbrido UK)."
           }
         },
+        "pirateweather": {
+          "apiKey": {
+            "label": "Chave API do Pirate Weather",
+            "helpText": "Digite sua chave API do Pirate Weather. Necessária para dados meteorológicos."
+          },
+          "endpoint": {
+            "label": "Endpoint da API",
+            "helpText": "Substitua o endpoint padrão da API do Pirate Weather, se necessário. O padrão é https://api.pirateweather.net/forecast se deixado vazio."
+          }
+        },
         "notes": {
           "none": "Nenhum dado meteorológico será recuperado.",
           "yrno": {
@@ -2786,7 +3371,8 @@
             "freeService": "Yr é um serviço gratuito de dados meteorológicos. Para mais informações, visite <a href=\"https://hjelp.yr.no/hc/en-us/articles/206550539-Facts-about-Yr\" class=\"link link-primary\" target=\"_blank\" rel=\"noopener noreferrer\">Yr.no</a>."
           },
           "openweather": "O uso do OpenWeather requer uma chave de API. Inscreva-se para uma chave de API gratuita em <a href=\"https://home.openweathermap.org/users/sign_up\" class=\"link link-primary\" target=\"_blank\" rel=\"noopener noreferrer\">OpenWeather</a>.",
-          "wunderground": "Requer uma chave API do Weather Underground e um ID de estação PWS válido. Veja <a href=\"https://www.wunderground.com/member/devices\" class=\"link link-primary\" target=\"_blank\" rel=\"noopener noreferrer\">Weather Underground</a> para detalhes."
+          "wunderground": "Requer uma chave API do Weather Underground e um ID de estação PWS válido. Veja <a href=\"https://www.wunderground.com/member/devices\" class=\"link link-primary\" target=\"_blank\" rel=\"noopener noreferrer\">Weather Underground</a> para detalhes.",
+          "pirateweather": "O uso do Pirate Weather requer uma chave de API, inscreva-se em <a href=\"https://pirateweather.net/\" class=\"link link-primary\" target=\"_blank\" rel=\"noopener noreferrer\">Pirate Weather</a>."
         },
         "apiKey": {
           "label": "Chave de API",
@@ -3006,6 +3592,13 @@
         "typeLabel": "Tipo de Stream",
         "typeHelp": "Protocolo do stream - detectado automaticamente da URL",
         "transportLabel": "Protocolo",
+        "mediaModeLabel": "Modo de mídia",
+        "mediaModeHelp": "O fluxo completo solicita áudio e vídeo (o vídeo é descartado após a decodificação) e funciona com a maioria das câmeras. Auto tenta primeiro apenas áudio e recorre ao fluxo completo se a câmera não conseguir fornecer áudio sozinha. Apenas áudio nunca ocupa um slot de vídeo da câmera, mas falha se a câmera não conseguir fornecer a faixa de áudio por conta própria.",
+        "mediaMode": {
+          "auto": "Automático",
+          "audioOnly": "Apenas áudio",
+          "fullStream": "Fluxo completo"
+        },
         "summary": "{count} stream(s) configurado(s)",
         "healthy": "saudável",
         "unhealthy": "com falha",
@@ -3152,6 +3745,7 @@
         "dataOutputTitle": "Saída de dados do nível sonoro",
         "dataOutputDescription": "Quando ativado, as medições do nível sonoro são publicadas via:",
         "mqttTopic": "Tópico MQTT:",
+        "mqttSourceTopic": "Tópico MQTT por fonte (com Home Assistant discovery):",
         "sseEndpoint": "Endpoint SSE:",
         "prometheusMetrics": "Métricas Prometheus:"
       },
@@ -3178,8 +3772,6 @@
         "normalizationDisabled": "Normalização de áudio está desativada",
         "targetLUFSLabel": "Volume alvo (LUFS)",
         "targetLUFSHelp": "Alvo de volume integrado em LUFS (Unidades de Volume relativas à Escala Completa). -23 LUFS é o padrão de transmissão EBU R128. Intervalo: -40 a -10 LUFS.",
-        "loudnessRangeLabel": "Intervalo de volume (LU)",
-        "loudnessRangeHelp": "Variação máxima de volume dentro do clipe (0-20 LU). Valores mais baixos criam volume mais consistente, mas podem reduzir a dinâmica.",
         "truePeakLabel": "Limite de pico verdadeiro (dBTP)",
         "truePeakHelp": "Nível máximo de pico verdadeiro para evitar distorção digital (-10 a 0 dBTP). -2 dBTP fornece margem segura para a maioria dos sistemas de reprodução.",
         "normalizationNote": "Padrão EBU R128",
@@ -3215,8 +3807,11 @@
         "pathHelp": "Diretório onde os clipes de áudio serão salvos. Caminhos relativos são do diretório da aplicação. Exemplo: 'clips/' ou '/var/audio/birds/'",
         "typeLabel": "Formato de Áudio",
         "typeHelp": "Formato de áudio para clipes salvos. WAV e FLAC são sem perdas (melhor qualidade, arquivos maiores). MP3, AAC e Opus são com perdas (arquivos menores, pequena perda de qualidade).",
+        "ultrasonicTypeLabel": "Formato Ultrassónico",
+        "ultrasonicTypeHelp": "Formato sem perdas (WAV ou FLAC) usado apenas para capturas de morcegos e ultrassónicas acima de 48 kHz. Estas são salvas na sua taxa de amostragem de origem completa em vez do formato acima, para que nenhum detalhe ultrassónico seja perdido.",
         "bitrateLabel": "Taxa de bits",
         "bitrateHelp": "Taxa de bits de compressão de áudio para formatos com perdas. Intervalo: {min}-{max} kbps. Valores mais altos fornecem melhor qualidade, mas arquivos maiores.",
+        "losslessBitrateValue": "N/D - Sem perda",
         "losslessNote": "Formatos sem perdas preservam a qualidade de áudio original sem artefatos de compressão."
       },
       "audioNormalization": {
@@ -3228,8 +3823,6 @@
         "requiresRecording": "Ative a gravação de clipes na aba Gravação para usar a normalização de áudio.",
         "targetLUFSLabel": "Volume Alvo (LUFS)",
         "targetLUFSHelp": "Alvo de volume integrado em LUFS (Unidades de Volume relativas à Escala Completa). -23 LUFS é o padrão de transmissão EBU R128. Intervalo: -40 a -10 LUFS.",
-        "loudnessRangeLabel": "Intervalo de Volume (LU)",
-        "loudnessRangeHelp": "Variação máxima de volume dentro do clipe (0-20 LU). Valores mais baixos criam volume mais consistente, mas podem reduzir a dinâmica.",
         "truePeakLabel": "Limite de Pico Verdadeiro (dBTP)",
         "truePeakHelp": "Nível máximo de pico verdadeiro para evitar distorção digital (-10 a 0 dBTP). -2 dBTP fornece margem segura para a maioria dos sistemas de reprodução.",
         "noteTitle": "Padrão EBU R128",
@@ -3284,7 +3877,17 @@
       },
       "models": {
         "recommendBoth": "Para melhor cobertura de deteção de espécies, recomenda-se executar tanto o BirdNET como o Perch em conjunto.",
-        "perchOnlyWarning": "O Perch sozinho produz menos deteções. Reduza o limiar de confiança para 0.50 para resultados significativos, ou ative o BirdNET em paralelo para melhor cobertura."
+        "perchOnlyWarning": "O Perch sozinho produz menos deteções. Reduza o limiar de confiança para 0.50 para resultados significativos, ou ative o BirdNET em paralelo para melhor cobertura.",
+        "loading": "Carregando modelos de deteção...",
+        "noneEnabledTitle": "Nenhum modelo de deteção ativado.",
+        "noneEnabledHelp": "Você ainda pode salvar esta fonte. O seu áudio será analisado pelos modelos padrão assim que um for ativado.",
+        "noneEnabledLink": "Abrir galeria de modelos",
+        "noneAvailable": "Não há modelos de deteção ativados neste servidor.",
+        "loadFailedWarning": "Não foi possível carregar um modelo de deteção, portanto esta fonte não será analisada até que se recupere.",
+        "loadFailedLink": "Ver status de Modelos de IA",
+        "defaultBadge": "{models} (padrão)",
+        "defaultPendingBadge": "Modelos padrão",
+        "noneBadge": "Nenhum modelo carregado"
       }
     },
     "security": {
@@ -3392,24 +3995,24 @@
           "userIdLabel": "ID do usuário"
         },
         "line": {
-          "title": "LINE Login",
+          "title": "Login do LINE",
           "enableLabel": "Permitir login OAuth2 via LINE",
           "redirectUriTitle": "URI de redirecionamento para LINE Developers Console:",
           "getCredentialsLabel": "Obter credenciais no LINE Developers Console",
-          "clientIdLabel": "Channel ID",
+          "clientIdLabel": "ID do Canal",
           "clientIdHelpText": "O Channel ID obtido do LINE Developers Console ao configurar o LINE Login.",
-          "clientSecretLabel": "Channel Secret",
+          "clientSecretLabel": "Segredo do Canal",
           "clientSecretHelpText": "O Channel Secret obtido do LINE Developers Console ao configurar o LINE Login.",
           "userIdLabel": "ID do usuário"
         },
         "kakao": {
-          "title": "Kakao Login",
+          "title": "Login do Kakao",
           "enableLabel": "Permitir login OAuth2 via Kakao",
           "redirectUriTitle": "URI de redirecionamento para Kakao Developers Console:",
           "getCredentialsLabel": "Obter credenciais no Kakao Developers Console",
-          "clientIdLabel": "REST API Key",
+          "clientIdLabel": "Chave da API REST",
           "clientIdHelpText": "O REST API Key obtido do Kakao Developers Console ao configurar o Kakao Login.",
-          "clientSecretLabel": "Client Secret",
+          "clientSecretLabel": "Segredo do Cliente",
           "clientSecretHelpText": "O Client Secret obtido do Kakao Developers Console ao configurar o Kakao Login.",
           "userIdLabel": "ID do usuário"
         },
@@ -3418,9 +4021,9 @@
           "enableLabel": "Ativar autenticação OIDC",
           "redirectUriTitle": "URI de Redirecionamento",
           "getCredentialsLabel": "Configurar no seu Fornecedor de Identidade",
-          "clientIdLabel": "Client ID",
+          "clientIdLabel": "ID do Cliente",
           "clientIdHelpText": "O client ID do seu fornecedor de identidade OIDC",
-          "clientSecretLabel": "Client Secret",
+          "clientSecretLabel": "Segredo do Cliente",
           "clientSecretHelpText": "O client secret do seu fornecedor de identidade OIDC",
           "userIdLabel": "Utilizador Permitido (email ou sub claim)",
           "issuerUrlLabel": "URL do Emissor",
@@ -3449,8 +4052,8 @@
         "warningText": "Ativar funcionalidades de acesso público expõe-nas a qualquer pessoa que consiga aceder a este servidor. Ative apenas se confia no seu ambiente de rede."
       },
       "privateMode": {
-        "label": "Require login for all UI pages (private mode)",
-        "help": "When enabled, the dashboard, detections, analytics, search, about, and notifications pages all require authentication. Settings and system pages are always protected regardless of this setting. The Public Live Audio toggle below is honoured independently — leaving it on still allows unauthenticated playback. Default is off so guests can browse the read-only UI."
+        "label": "Exigir login para todas as páginas da interface (modo privado)",
+        "help": "Quando ativado, o painel, as detecções, as análises, a pesquisa, a página sobre e as notificações exigem autenticação. As configurações e as páginas do sistema são sempre protegidas, independentemente desta configuração. A opção Áudio ao Vivo Público abaixo é respeitada de forma independente (deixá-la ativada ainda permite a reprodução não autenticada). O padrão é desativado para que os visitantes possam navegar pela interface de modo leitura."
       },
       "placeholders": {
         "baseUrl": "https://birdnet.example.com:5500",
@@ -3653,16 +4256,22 @@
         "configureActions": "Configurar Ações",
         "actionsConfigured": "Configurado",
         "list": {
-          "threshold": "Limiar:",
-          "interval": "Intervalo:",
-          "intervalNone": "Nenhum",
-          "actionBadge": "Ação",
           "editTitle": "Editar configuração",
           "removeTitle": "Remover configuração"
         },
         "emptyState": {
           "title": "Ainda não há configurações.",
           "description": "Clique em \"Adicionar Configuração\" para personalizar as configurações de detecção de espécies."
+        },
+        "table": {
+          "columnScientificName": "Nome científico",
+          "intervalDefault": "Padrão",
+          "intervalDefaultTooltip": "0 = usar o intervalo padrão global",
+          "noActions": "Nenhum",
+          "searchPlaceholder": "Pesquisar espécies...",
+          "noResults": "Nenhuma configuração correspondente",
+          "editDisabledReason": "Salve ou feche o editor atual antes de editar outra espécie",
+          "actionsDisabledBusy": "Por favor, aguarde o término da operação atual"
         }
       },
       "synonyms": {
@@ -3789,6 +4398,18 @@
             "hemisphereNote": "As datas das estações são configuradas automaticamente com base na sua latitude. O hemisfério norte usa estações padrão, o hemisfério sul tem datas deslocadas, e regiões equatoriais usam estações chuvosas/secas."
           }
         },
+        "infrequent": {
+          "title": "Rastreamento infrequente",
+          "description": "Marca espécies que retornam após uma longa ausência (visitantes raros de retorno)",
+          "enabled": {
+            "label": "Ativar rastreamento infrequente",
+            "helpText": "Rastreia e notifica quando uma espécie é detectada novamente após uma longa ausência"
+          },
+          "absenceDays": {
+            "label": "Limite de ausência (dias)",
+            "helpText": "Número mínimo de dias desde a última detecção antes que uma espécie que retorna seja marcada como 'infrequente' (1-365)"
+          }
+        },
         "months": {
           "january": "Janeiro",
           "february": "Fevereiro",
@@ -3806,13 +4427,13 @@
         "units": {
           "days": "dias",
           "min": "min",
-          "hours": "hrs"
+          "hours": "h"
         }
       },
       "dynamicThreshold": {
         "tabLabel": "Aprendido",
         "title": "Limiares aprendidos",
-        "description": "Esta página mostra dados de execução dos limiares dinâmicos. Quando ativado em Configurações principais → Detecção, os limiares são ajustados automaticamente por múltiplas detecções de alta confiança. As espécies mostradas aqui são consideradas existentes nesta localização.",
+        "description": "Esta página mostra dados de execução dos limiares dinâmicos. Quando ativado, os limiares são ajustados automaticamente por múltiplas detecções de alta confiança. As espécies mostradas aqui são consideradas existentes nesta localização.",
         "stats": {
           "active": "Ativos",
           "atMinimum": "No mínimo",
@@ -3961,8 +4582,8 @@
         "templateTitlePlaceholder": "Deixe vazio para o padrão",
         "templateMessage": "Modelo de mensagem",
         "templateMessagePlaceholder": "Deixe vazio para o padrão",
-        "noConditionsEvent": "Sem condições — a regra dispara a cada evento",
-        "noConditionsMetric": "Sem condições — a regra dispara a cada atualização de métrica",
+        "noConditionsEvent": "Sem condições - a regra dispara a cada evento",
+        "noConditionsMetric": "Sem condições - a regra dispara a cada atualização de métrica",
         "eventsCount": "eventos",
         "metricsCount": "métricas",
         "durationFor": "durante",
@@ -3986,6 +4607,7 @@
           "stream_disconnected": "Fluxo desconectado",
           "stream_error": "Erro de fluxo",
           "detection_new_species": "Nova espécie detetada",
+          "detection_infrequent_species": "Espécie infrequente detectada",
           "detection_occurred": "Deteção realizada",
           "application_started": "Aplicação iniciada",
           "application_stopped": "Aplicação parada",
@@ -4035,6 +4657,10 @@
         "newSpecies": {
           "name": "Nova espécie detetada",
           "description": "Notifica quando uma espécie é detetada pela primeira vez"
+        },
+        "infrequentSpecies": {
+          "name": "Espécie infrequente detectada",
+          "description": "Notifica quando uma espécie retorna após uma longa ausência"
         },
         "streamDisconnected": {
           "name": "Fluxo de áudio desligado",
@@ -4309,7 +4935,16 @@
       "streamTitleDefault": "Transmissão de áudio de pássaros",
       "streamArtist": "BirdNET-Go",
       "streamAlbum": "Transmissão ao vivo",
-      "playbackError": "Erro de reprodução: {details}"
+      "playbackError": "Erro de reprodução: {details}",
+      "audibleBats": {
+        "title": "Reprodução audível de morcegos",
+        "subtitle": "Desacelera chamadas ultrassónicas para a faixa audível humana.",
+        "timeExpansion": "Expansão de tempo",
+        "enable": "Ativar",
+        "disable": "Desativar",
+        "generating": "A gerar áudio derivado…",
+        "error": "Falha ao gerar áudio audível de morcegos"
+      }
     },
     "spectrogram": {
       "notGenerated": "Espectrograma ainda não gerado",
@@ -4327,8 +4962,10 @@
       "spectrogramLoaded": "Espectrograma carregado",
       "spectrogramLoadingAria": "Carregando espectrograma",
       "spectrogramAlt": "Espectrograma de áudio",
+      "spectrogramForSpecies": "Espectrograma para {species}",
       "spectrogramGeneratingAria": "Gerando espectrograma",
       "generating": "Gerando...",
+      "waiting": "Aguardando...",
       "queuePosition": "Fila: {position}",
       "loadError": "Falha ao carregar áudio"
     },
@@ -4439,6 +5076,11 @@
       "removeCertificate": "Remover Certificado",
       "fileReadError": "Falha ao ler ficheiro",
       "loading": "A carregar informações do certificado..."
+    },
+    "birdThumbnail": {
+      "viewDetections": "Ver detecções de {name}",
+      "largeView": "Visualização ampliada de {name}",
+      "clickToView": "Clique para ver as detecções"
     }
   },
   "connectivity": {
@@ -4453,7 +5095,7 @@
   },
   "quietHours": {
     "indicator": {
-      "tooltip": "Horas silenciosas ativas — {count} fonte(s) pausada(s)"
+      "tooltip": "Horas silenciosas ativas - {count} fonte(s) pausada(s)"
     }
   },
   "errors": {
@@ -4476,7 +5118,8 @@
       "typesRequired": "O tipo de objeto e o tipo de ativação são obrigatórios",
       "duplicateName": "Já existe uma regra com este nome",
       "invalidJSON": "JSON inválido",
-      "invalidEscalation": "Os passos de escalação são inválidos"
+      "invalidEscalation": "Os passos de escalação são inválidos",
+      "engineUnavailable": "O mecanismo de alerta está indisponível"
     },
     "detection": {
       "invalidDate": "Formato de {paramName} inválido, utilize AAAA-MM-DD"
@@ -4490,7 +5133,7 @@
       "createFailed": "Não foi possível criar a tarefa de cópia de segurança",
       "notFound": "Tarefa de cópia de segurança não encontrada ou expirada",
       "notReady": "A cópia de segurança ainda não está pronta para transferência",
-      "fileNotFound": "Ficheiro de cópia de segurança não encontrado — a tarefa pode ter expirado",
+      "fileNotFound": "Ficheiro de cópia de segurança não encontrado - a tarefa pode ter expirado",
       "sqliteOnly": "Cópia de segurança disponível apenas para bases de dados SQLite",
       "dbNotConfigured": "Base de dados não configurada",
       "unsupportedType": "Não é possível efetuar cópia de segurança deste tipo de armazenamento de dados",
@@ -4509,7 +5152,7 @@
       "noLegacyDB": "Nenhuma base de dados antiga encontrada",
       "accessFailed": "Não é possível aceder à base de dados antiga",
       "restartRequired": "A aplicação deve ser reiniciada após a migração antes de a limpeza estar disponível",
-      "safetyCheck": "O ficheiro de destino parece ser uma base de dados V2 — limpeza não permitida por segurança",
+      "safetyCheck": "O ficheiro de destino parece ser uma base de dados V2 - limpeza não permitida por segurança",
       "noLegacyTables": "Nenhuma tabela antiga encontrada",
       "restartNeeded": "Não é possível limpar: a aplicação deve ser reiniciada após a migração",
       "alreadyRunning": "A limpeza já está em curso"
@@ -4524,6 +5167,7 @@
       "birdweatherClientFailed": "Não foi possível criar o cliente BirdWeather",
       "noWeatherProvider": "Nenhum fornecedor de meteorologia selecionado",
       "openWeatherKeyRequired": "A chave API do OpenWeather é obrigatória",
+      "pirateWeatherKeyRequired": "A chave API do Pirate Weather é obrigatória",
       "processorUnavailable": "Processador não disponível",
       "discoveryFailed": "Não foi possível iniciar a deteção do Home Assistant"
     },
@@ -4533,6 +5177,7 @@
       "notFound": "Notificação não encontrada",
       "hostRequired": "O parâmetro de host é obrigatório",
       "invalidHost": "Parâmetro de host inválido",
+      "invalidBody": "Corpo da solicitação inválido",
       "rateLimit": "Demasiadas tentativas de ligação ao fluxo de notificações, aguarde antes de tentar novamente"
     },
     "streams": {
@@ -4542,7 +5187,8 @@
         "invalidUrl": "Formato de URL inválido. Introduza um URL completo, por ex. rtsp://host:porta/caminho",
         "unsupportedScheme": "Esquema de URL não suportado \"{scheme}\". Use rtsp, rtsps, http, https, rtmp ou udp",
         "blockedDestination": "Este destino está bloqueado por razões de segurança",
-        "connectionFailed": "Não foi possível ligar ao stream. Verifique se o URL está correto e se o stream está acessível"
+        "connectionFailed": "Não foi possível ligar ao stream. Verifique se o URL está correto e se o stream está acessível",
+        "noAudioTrack": "O stream não tem faixa de áudio. Apenas streams que contenham áudio podem ser usados"
       }
     },
     "debug": {
@@ -4580,9 +5226,9 @@
       "waningCrescent": "Lua Minguante"
     },
     "birding": {
-      "excellent": "Calmo — excelente para ouvir cantos de aves",
-      "moderate": "Vento moderado — alguns cantos podem ser difíceis de ouvir",
-      "poor": "Vento forte — cantos de aves dificilmente audíveis"
+      "excellent": "Calmo - excelente para ouvir cantos de aves",
+      "moderate": "Vento moderado - alguns cantos podem ser difíceis de ouvir",
+      "poor": "Vento forte - cantos de aves dificilmente audíveis"
     }
   },
   "wizard": {
@@ -4636,7 +5282,7 @@
         "rtspUrlPlaceholder": "rtsp://user:password@host:port/stream",
         "rtspUrlHelp": "Introduza o URL da sua transmissão de áudio RTSP",
         "additionalSourcesHint": "Pode adicionar mais fontes de áudio posteriormente nas Definições.",
-        "configureLater": "Ignorar — configurar mais tarde"
+        "configureLater": "Ignorar - configurar mais tarde"
       },
       "detection": {
         "title": "Limiar de Deteção",
@@ -4721,6 +5367,20 @@
       "locale": {
         "label": "Idioma das espécies",
         "helpText": "Idioma utilizado para os nomes comuns das espécies na interface."
+      },
+      "secondaryThresholdOverride": {
+        "label": "Override confidence threshold",
+        "helpText": "When enabled, this model uses its own confidence threshold below. When disabled, it follows the main BirdNET confidence threshold."
+      },
+      "secondaryThreshold": {
+        "helpText": "Minimum confidence score (0.01 - 0.99) required for a detection from this model to be recorded.",
+        "followsBirdnet": "Enable the override above to set a custom value. This model currently follows the main BirdNET confidence threshold."
+      },
+      "perchThreshold": {
+        "label": "Perch v2 Confidence Threshold"
+      },
+      "birdnetv3Threshold": {
+        "label": "BirdNET v3.0 Confidence Threshold"
       }
     },
     "rangeFilter": {
@@ -4747,9 +5407,92 @@
       "title": "Avançado",
       "description": "Configuração de processamento e modelos personalizados."
     },
+    "downloadSource": {
+      "title": "Origem de download",
+      "description": "Local de onde os arquivos do modelo são baixados.",
+      "note": "Deixe este campo vazio a menos que o huggingface.co esteja bloqueado ou lento em sua rede. A variável de ambiente HF_ENDPOINT é usada quando este campo está vazio, e huggingface.co quando nenhum está configurado. Um valor que não seja um endereço http ou https válido é ignorado e o padrão é usado em vez dele.",
+      "endpoint": {
+        "label": "Endpoint do HuggingFace",
+        "helpText": "Servidor espelho para baixar modelos, por exemplo https://hf-mirror.com. Aplica-se ao próximo download; não é necessário reiniciar.",
+        "validationMessage": "Insira um endereço completo começando com http:// ou https://, ou deixe o campo vazio."
+      }
+    },
     "gallery": {
       "title": "Galeria de modelos",
       "description": "Gerenciar modelos classificadores para detecção de aves e morcegos.",
+      "region": {
+        "title": "Região do modelo",
+        "modeAuto": "Automático",
+        "modeAutoHint": "Escolher a melhor variante regional a partir da localização da estação",
+        "modeManual": "Manual region select",
+        "modeManualHint": "Choose a region yourself, or the worldwide model",
+        "worldwideTitle": "Worldwide",
+        "worldwideSubtitle": "Every region, all species",
+        "worldwideResourceNote": "Largest model, uses the most RAM and CPU",
+        "selectedBadge": "Selected",
+        "orSpecificRegion": "Or a specific region",
+        "search": "Search regions or countries",
+        "searchNoResults": "No regions match \"{query}\"",
+        "manualPrompt": "Choose a region below, or the worldwide model.",
+        "countriesOverflow": "+{count}",
+        "coreCoverage": "Core coverage:",
+        "partialCoverage": "Partial coverage:",
+        "pinAction": "Fixar {region}",
+        "switchToAuto": "Mudar para automático",
+        "loading": "Carregando regiões...",
+        "loadFailed": "Falha ao carregar dados da região",
+        "mapUnavailable": "Mapa de cobertura indisponível",
+        "mapAria": "Mapa de cobertura de {region}",
+        "why": {
+          "noLocation": "A seleção automática requer a localização da estação. Defina-a nas Configurações principais; o modelo global será usado até lá.",
+          "outsideCoverage": "A sua localização está fora da cobertura de todos os modelos regionais, pelo que é utilizado o modelo global.",
+          "ambiguous": "A sua localização fica perto da fronteira entre {region} e {runnerUp}. A seleção automática utiliza {region}; fixe qualquer uma para tornar a escolha explícita.",
+          "resolved": "Região detetada a partir da sua localização: {region}.",
+          "global": "O modelo global é sempre utilizado, independentemente da localização da estação.",
+          "pinned": "Fixado em {region}. A localização da estação não afeta a seleção do modelo.",
+          "pinnedMismatch": "A sua localização corresponde atualmente a {resolved}.",
+          "pinnedUnknown": "A região fixada \"{region}\" não está disponível no catálogo de modelos atual. As famílias de modelos recorrem à sua localização ou ao modelo global."
+        }
+      },
+      "variants": {
+        "title": "Variante do modelo",
+        "recommended": "Recomendado",
+        "recommendedForHardware": "Ideal para o seu hardware",
+        "installed": "Instalado",
+        "default": "Padrão",
+        "incompatible": "Não disponível para o seu hardware",
+        "showAll": "Mostrar todas as variantes ({count})",
+        "showRegion": "Mostrar variantes para {region} e o seu hardware ({count})",
+        "showHardware": "Mostrar variantes de hardware ({count})",
+        "showAllRegions": "Mostrar todas as variantes, incluindo outras regiões ({count})",
+        "regionContext": "Variantes regionais mostradas para {region}, definidas pela seleção de região do modelo acima",
+        "regionContextNone": "Variantes regionais estão disponíveis. Escolha uma região na seleção de região do modelo acima ou mostre todas as variantes.",
+        "otherRegions": "Outras regiões",
+        "filterPlaceholder": "Filtrar regiões",
+        "filterAria": "Filtrar versões ajustadas por região",
+        "filterNoMatch": "Nenhuma região corresponde a \"{query}\"",
+        "latency": "~{ms} ms",
+        "precisionInfo": "About precision and variants",
+        "precisionHelp": "Precision (FP32, FP16, INT8) trades accuracy for size and speed: FP32 is most accurate, INT8 is smallest and fastest. Recommended is the best match for your detected hardware; Default is the model's standard build."
+      },
+      "actionInProgress": "Aguarde a conclusão da instalação, reinstalação ou remoção do modelo atual",
+      "removeSuccess": "Removed {name}",
+      "reasons": {
+        "backendRecommended": "Roda em {backend}, o backend recomendado para o seu hardware",
+        "backendSupported": "Roda em {backend}",
+        "regionMatched": "Adaptado à sua região ({region})",
+        "regionGlobalFallback": "Modelo global para a sua localização",
+        "precisionFp16Native": "Versão de meia precisão ajustada para o seu processador",
+        "precisionFp16GpuPreferred": "Versão de meia precisão: metade do download, roda na sua GPU",
+        "ramConstrainedFit": "Versão quantizada otimizada para a memória disponível",
+        "benchmarkMeasured": "O mais rápido no seu dispositivo segundo os testes de desempenho",
+        "variantLegacy": "Substituído por uma versão mais recente",
+        "archUnsupported": "Requer um processador {required}",
+        "backendMissing": "Necessita de um backend de inferência que a sua versão não consegue alcançar ({required})",
+        "ramInsufficient": "Necessita de pelo menos {requiredMb} MB de memória",
+        "hardwareExcluded": "Não suportado no seu hardware ({token})",
+        "backendOnnxUnavailable": "Requer ONNX Runtime, que não está disponível neste sistema. Imagens Docker e arquivos compactados de lançamento o incluem; consulte o guia de instalação do ONNX Runtime."
+      },
       "tabs": {
         "installed": "Instalados",
         "available": "Disponíveis"
@@ -4757,7 +5500,6 @@
       "loading": "Carregando modelos...",
       "retry": "Tentar novamente",
       "builtIn": "Integrado",
-      "builtInDescription": "Classificador de espécies de aves integrado pela equipe BirdNET.",
       "species": "{count} espécies",
       "install": "Instalar",
       "installing": "Instalando...",
@@ -4802,7 +5544,13 @@
       "errors": {
         "catalogLoadFailed": "Falha ao carregar o catálogo de modelos",
         "installFailed": "Falha ao iniciar a instalação do modelo",
-        "removeFailed": "Falha ao remover o modelo"
+        "removeFailed": "Falha ao remover o modelo",
+        "actionFailed": "Ocorreu um problema com {name}",
+        "downloadSourceHint": "Se o huggingface.co estiver bloqueado ou lento em sua rede, defina um espelho na seção Origem de download abaixo.",
+        "goToDownloadSource": "Ir para Origem de download",
+        "dismiss": "Dispensar",
+        "details": "Details",
+        "removeRetryHint": "To try again, use the Remove button on the model's card."
       },
       "regionLabel": "Região",
       "speciesLabel": "Espécies",
@@ -4810,9 +5558,40 @@
       "reinstalling": "Reinstalando...",
       "reinstallComplete": "Ficheiros verificados com sucesso",
       "geomodelBadge": "Inclui BirdNET v3.0 geomodel",
-      "onnxRuntimeRequired": "Requer ONNX Runtime que não está disponível neste sistema.",
-      "onnxRuntimeMissing": "O ONNX Runtime não está disponível. Este modelo não pode ser executado.",
-      "unavailable": "Indisponível"
+      "preview": {
+        "badge": "Prévia",
+        "buildLabel": "{version} · {build}",
+        "cardNotice": "Prévia para desenvolvedores, não é a versão final. Esta é uma versão inicial para testes; os resultados podem mudar antes da versão estável.",
+        "dialogNotice": "Você está instalando uma prévia para desenvolvedores ({build}). É útil para testes, mas ainda não é recomendada como seu único classificador."
+      },
+      "entryIncompatible": "Este modelo não está disponível neste sistema.",
+      "regionGlobal": "Global",
+      "hardwareLabel": "Hardware",
+      "hardware": {
+        "gpuNvidia": "GPU (NVIDIA)",
+        "gpuIntel": "GPU (Intel)",
+        "armCpu": "ARM CPU",
+        "amd64Cpu": "AMD64 CPU",
+        "arm64Cpu": "ARM64 CPU",
+        "cpu": "CPU"
+      },
+      "optimize": {
+        "bannerTitle": "{count, plural, one {# modelo pode funcionar mais rápido no seu hardware} other {# modelos podem funcionar mais rápido no seu hardware}}",
+        "review": "Revisar",
+        "dismiss": "Descartar",
+        "badgeTitle": "Está disponível uma versão mais rápida para o seu hardware",
+        "swap": "Otimizar",
+        "dialogTitle": "Otimizar os seus modelos",
+        "installedBuild": "Installed build",
+        "fromTo": "{from} para {to}",
+        "apply": "Aplicar",
+        "applyAll": "Aplicar tudo",
+        "applying": "A aplicar...",
+        "applied": "Aplicado",
+        "applyFailed": "Falha ao aplicar",
+        "upToDate": "Todos os seus modelos já estão otimizados para este hardware.",
+        "licenseNote": "A troca permanece dentro do mesmo modelo, pelo que a sua licença não é alterada."
+      }
     },
     "bird": {
       "title": "Deteção de aves",
@@ -4824,6 +5603,14 @@
     },
     "dynamicThreshold": {
       "birdOnlyNote": "O limiar dinâmico aplica-se apenas a classificadores de aves."
+    },
+    "perch": {
+      "title": "Perch v2 Detection",
+      "description": "Set a dedicated confidence threshold for Google Perch v2 detections, independent of the BirdNET threshold."
+    },
+    "birdnetv3": {
+      "title": "BirdNET v3.0 Detection",
+      "description": "Set a dedicated confidence threshold for BirdNET v3.0 detections, independent of the main BirdNET threshold."
     }
   },
   "restart": {
@@ -4836,7 +5623,14 @@
     "bannerTitle": "Reinicialização necessária",
     "bannerMessage": "As alterações de configuração requerem uma reinicialização:",
     "bannerAction": "Reiniciar agora",
-    "restartFailed": "Falha ao iniciar a reinicialização"
+    "restartFailed": "Falha ao iniciar a reinicialização",
+    "reasons": {
+      "webserver": "Servidor web / configurações de rede",
+      "oauth": "Configurações do provedor de autenticação",
+      "database": "Configurações do banco de dados",
+      "logging": "Configurações de registro",
+      "tlsCertificate": "Certificado TLS"
+    }
   },
   "help": {
     "title": "Ajuda e suporte",
@@ -4901,20 +5695,20 @@
     }
   },
   "health": {
-    "title": "System Health",
-    "running": "Running diagnostics...",
-    "lastRun": "Last run",
+    "title": "Saúde do Sistema",
+    "running": "Executando diagnósticos...",
+    "lastRun": "Última execução",
     "refresh": "Atualizar",
-    "exportText": "Copy Report",
-    "exportJSON": "Download JSON",
-    "copied": "Report copied to clipboard",
-    "duration": "Duration",
+    "exportText": "Copiar Relatório",
+    "exportJSON": "Baixar JSON",
+    "copied": "Relatório copiado para a área de transferência",
+    "duration": "Duração",
     "summary": {
-      "healthy": "Healthy",
-      "warnings": "Warnings",
-      "critical": "Critical",
-      "skipped": "Skipped",
-      "total": "Total checks"
+      "healthy": "Saudável",
+      "warnings": "Avisos",
+      "critical": "Crítico",
+      "skipped": "Ignorado",
+      "total": "Total de verificações"
     },
     "metricFooter": {
       "allPassing": "Tudo OK",
@@ -4926,33 +5720,33 @@
     },
     "diagnostics": "Diagnóstico",
     "categories": {
-      "system": "System",
-      "audio": "Audio Pipeline",
-      "analysis": "Analysis",
-      "streams": "Audio Streams",
-      "database": "Database",
-      "network": "Network",
-      "config": "Configuration",
-      "logs": "Logs"
+      "system": "Sistema",
+      "audio": "Pipeline de Áudio",
+      "analysis": "Análise",
+      "streams": "Fluxos de áudio",
+      "database": "Banco de Dados",
+      "network": "Rede",
+      "config": "Configuração",
+      "logs": "Registros"
     },
     "status": {
-      "healthy": "Healthy",
-      "warning": "Warning",
-      "critical": "Critical",
-      "unknown": "Unknown",
-      "skipped": "Skipped"
+      "healthy": "Saudável",
+      "warning": "Aviso",
+      "critical": "Crítico",
+      "unknown": "Desconhecido",
+      "skipped": "Ignorado"
     },
     "errors": {
-      "title": "Recent Errors",
-      "noErrors": "No recent errors",
-      "fetchFailed": "Failed to load diagnostics"
+      "title": "Erros Recentes",
+      "noErrors": "Nenhum erro recente",
+      "fetchFailed": "Falha ao carregar os diagnósticos"
     },
     "export": {
-      "reportTitle": "BirdNET-Go System Health Report",
+      "reportTitle": "Relatório de Saúde do Sistema BirdNET-Go",
       "statusLabel": "Status",
-      "timeLabel": "Time",
-      "durationLabel": "Duration",
-      "checksLabel": "Checks"
+      "timeLabel": "Hora",
+      "durationLabel": "Duração",
+      "checksLabel": "Verificações"
     },
     "logs": {
       "topErrors": "Erros frequentes",

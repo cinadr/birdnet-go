@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/tphakala/birdnet-go/internal/analysis"
 	"github.com/tphakala/birdnet-go/internal/classifier"
 	"github.com/tphakala/birdnet-go/internal/conf"
 )
@@ -15,6 +16,9 @@ func Command(settings *conf.Settings) *cobra.Command {
 		Use:   "benchmark",
 		Short: "Run BirdNET inference benchmark",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Apply the runtime memory policy before loading the model, so the
+			// benchmark reflects the same configuration serve runs under.
+			analysis.ApplyMemoryPolicy(settings)
 			return runBenchmark(settings)
 		},
 	}
@@ -85,6 +89,13 @@ type benchmarkResults struct {
 }
 
 func runInferenceBenchmark(settings *conf.Settings, results *benchmarkResults) error {
+	// This is a read-only diagnostic: never rewrite the user's config.yaml if a
+	// configured model path turns out to be stale. Must be set BEFORE
+	// NewOrchestrator, because the first path-correction drain runs inside
+	// construction. The runtime fallback still resolves stale paths so the
+	// benchmark can run.
+	classifier.SetPathCorrectionPersistenceDisabled(true)
+
 	// Initialize BirdNET
 	bn, err := classifier.NewOrchestrator(settings)
 	if err != nil {
@@ -106,7 +117,7 @@ func runInferenceBenchmark(settings *conf.Settings, results *benchmarkResults) e
 
 	for time.Since(startTime) < duration {
 		inferenceStart := time.Now()
-		_, err := bn.Predict(context.Background(), [][]float32{silentChunk})
+		_, err := bn.PredictModel(context.Background(), classifier.RegistryIDBirdNETV24, [][]float32{silentChunk})
 		if err != nil {
 			return fmt.Errorf("prediction failed: %w", err)
 		}

@@ -23,7 +23,6 @@ func (a *notificationAdapter) CreateAndBroadcast(target string, notifType notifi
 	if svc == nil {
 		return nil // notification service not yet initialized
 	}
-	title, message = applyDetectionTemplates(notifType, title, message, eventProps)
 	notif := notification.NewNotification(notifType, notification.PriorityHigh, title, message).
 		WithDeliveryTarget(target)
 	notif = enrichFromEventProps(notif, notifType, eventProps)
@@ -220,6 +219,7 @@ func buildTemplateDataFromProps(props map[string]any) *notification.TemplateData
 
 	commonName, _ := props[PropertySpeciesName].(string)
 	daysSinceFirstSeen, _ := props[PropertyDaysSinceFirstSeen].(int)
+	daysSinceLastSeen, _ := props[PropertyDaysSinceLastSeen].(int)
 
 	return &notification.TemplateData{
 		CommonName:         commonName,
@@ -236,6 +236,7 @@ func buildTemplateDataFromProps(props map[string]any) *notification.TemplateData
 		DetectionURL:       detectionURL,
 		ImageURL:           imageURL,
 		DaysSinceFirstSeen: daysSinceFirstSeen,
+		DaysSinceLastSeen:  daysSinceLastSeen,
 	}
 }
 

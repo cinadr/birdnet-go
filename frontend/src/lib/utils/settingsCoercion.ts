@@ -23,7 +23,10 @@ import type {
   WebhookAuthConfig,
   PushFilterConfig,
   FalsePositiveFilterSettings,
+  PrivacyFilterSettings,
+  PrivacyFilterVadSettings,
 } from '$lib/stores/settings';
+import { AUDIO_GAIN_MIN_DB, AUDIO_GAIN_MAX_DB } from '$lib/stores/settings';
 
 // Type for partial/unknown settings data
 type UnknownSettings = Record<string, unknown>;
@@ -177,7 +180,7 @@ export function coerceObject<T extends Record<string, unknown>>(
 function coerceStreamConfig(stream: unknown): UnknownSettings {
   const rawStream = coerceObject(stream, {} as UnknownSettings);
 
-  return {
+  const coercedStream: UnknownSettings = {
     ...rawStream,
     name: coerceString(rawStream.name, ''),
     url: coerceString(rawStream.url, ''),
@@ -187,7 +190,22 @@ function coerceStreamConfig(stream: unknown): UnknownSettings {
       rawStream.transport === 'udp' || rawStream.transport === 'tcp'
         ? rawStream.transport
         : undefined,
+    mediaMode:
+      rawStream.mediaMode === 'auto' ||
+      rawStream.mediaMode === 'audio-only' ||
+      rawStream.mediaMode === 'full-stream'
+        ? rawStream.mediaMode
+        : undefined,
   };
+
+  // Clamp gain to the same -40..+40 dB range as sound card gain (backend
+  // validation). Only present when the caller sent one, so a stream without
+  // gain configured stays undefined rather than materializing a fake 0.
+  if ('gain' in rawStream) {
+    coercedStream.gain = coerceNumber(rawStream.gain, AUDIO_GAIN_MIN_DB, AUDIO_GAIN_MAX_DB, 0);
+  }
+
+  return coercedStream;
 }
 
 function coerceRTSPSettings(settings: unknown): UnknownSettings {
@@ -362,6 +380,14 @@ export function coerceAudioSettings(settings: PartialAudioSettings): PartialAudi
     // Always coerce enabled to boolean to ensure stable type
     coercedExport.enabled = coerceBoolean(exp.enabled, false);
 
+    // Backfill the ultrasonic export format for configs saved before this setting
+    // existed (or with an out-of-range value), so the WAV/FLAC dropdown always has
+    // a valid lossless value rather than rendering blank. The backend is the
+    // source of truth and re-validates on save.
+    if (coercedExport.ultrasonicType !== 'wav' && coercedExport.ultrasonicType !== 'flac') {
+      coercedExport.ultrasonicType = 'flac';
+    }
+
     // Clamp capture length between 10 and 60 seconds (backend validation)
     if ('length' in exp) {
       coercedExport.length = coerceNumber(exp.length, 10, 60, 15);
@@ -376,7 +402,7 @@ export function coerceAudioSettings(settings: PartialAudioSettings): PartialAudi
 
     // Clamp gain between -40 and +40 dB (backend validation)
     if ('gain' in exp) {
-      coercedExport.gain = coerceNumber(exp.gain, -40, 40, 0);
+      coercedExport.gain = coerceNumber(exp.gain, AUDIO_GAIN_MIN_DB, AUDIO_GAIN_MAX_DB, 0);
     }
 
     // Normalization settings
@@ -532,13 +558,13 @@ export function coerceMQTTSettings(settings: PartialMQTTSettings): PartialMQTTSe
     const tls = settings.tls as UnknownSettings;
     coerced.tls = {
       enabled: coerceBoolean(tls.enabled, false),
-      skipVerify: coerceBoolean(tls.skipVerify, false),
+      insecureSkipVerify: coerceBoolean(tls.insecureSkipVerify ?? tls.skipVerify, false),
     };
   } else {
     // Provide default TLS settings if missing
     coerced.tls = {
       enabled: false,
-      skipVerify: false,
+      insecureSkipVerify: false,
     };
   }
 
@@ -774,6 +800,42 @@ export function coerceNotificationSettings(
 }
 
 /**
+ * Coerce privacy filter settings
+ */
+export function coercePrivacyFilterSettings(
+  data?: Partial<PrivacyFilterSettings> & UnknownSettings
+): PrivacyFilterSettings {
+  const defaults: PrivacyFilterSettings = {
+    enabled: false,
+    confidence: 0.05,
+    debug: false,
+    vad: {
+      enabled: false,
+      threshold: 0.35,
+      modelPath: '',
+    },
+  };
+
+  if (!data || typeof data !== 'object') {
+    return defaults;
+  }
+
+  const rawVad = data.vad as Record<string, unknown> | undefined;
+  const vad: PrivacyFilterVadSettings = {
+    enabled: coerceBoolean(rawVad?.enabled, false),
+    threshold: coerceNumber(rawVad?.threshold, 0.01, 1.0, 0.35),
+    modelPath: coerceString(rawVad?.modelPath, ''),
+  };
+
+  return {
+    enabled: coerceBoolean(data.enabled, defaults.enabled),
+    confidence: coerceNumber(data.confidence, 0.0, 1.0, defaults.confidence),
+    debug: coerceBoolean(data.debug, defaults.debug),
+    vad,
+  };
+}
+
+/**
  * Main coercion function for all settings
  */
 export function coerceSettings(section: string, data: UnknownSettings): UnknownSettings {
@@ -805,6 +867,12 @@ export function coerceSettings(section: string, data: UnknownSettings): UnknownS
       if (Object.prototype.hasOwnProperty.call(data, 'falsePositiveFilter')) {
         coercedRealtime.falsePositiveFilter = coerceFalsePositiveFilterSettings(
           data.falsePositiveFilter as PartialFalsePositiveFilterSettings
+        );
+      }
+
+      if (Object.prototype.hasOwnProperty.call(data, 'privacyFilter')) {
+        coercedRealtime.privacyFilter = coercePrivacyFilterSettings(
+          data.privacyFilter as Partial<PrivacyFilterSettings> & UnknownSettings
         );
       }
 

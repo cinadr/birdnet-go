@@ -29,16 +29,16 @@ func (m *MockDatastoreAdapter) GetSpeciesFirstDetectionInPeriod(ctx context.Cont
 }
 
 // BG-17 fix: Add notification history methods
-func (m *MockDatastoreAdapter) GetActiveNotificationHistory(after time.Time) ([]datastore.NotificationHistory, error) {
-	return m.ds.GetActiveNotificationHistory(after)
+func (m *MockDatastoreAdapter) GetActiveNotificationHistory(ctx context.Context, after time.Time) ([]datastore.NotificationHistory, error) {
+	return m.ds.GetActiveNotificationHistory(ctx, after)
 }
 
-func (m *MockDatastoreAdapter) SaveNotificationHistory(history *datastore.NotificationHistory) error {
-	return m.ds.SaveNotificationHistory(history)
+func (m *MockDatastoreAdapter) SaveNotificationHistory(ctx context.Context, history *datastore.NotificationHistory) error {
+	return m.ds.SaveNotificationHistory(ctx, history)
 }
 
-func (m *MockDatastoreAdapter) DeleteExpiredNotificationHistory(before time.Time) (int64, error) {
-	return m.ds.DeleteExpiredNotificationHistory(before)
+func (m *MockDatastoreAdapter) DeleteExpiredNotificationHistory(ctx context.Context, before time.Time) (int64, error) {
+	return m.ds.DeleteExpiredNotificationHistory(ctx, before)
 }
 
 // setupIntegrationTestDB creates a real SQLite database for integration testing
@@ -47,6 +47,11 @@ func setupIntegrationTestDB(t *testing.T) *datastore.DataStore {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	// Close the pool when the test ends so its database/sql connectionOpener
+	// goroutine exits before the package goleak gate runs.
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, sqlDB.Close()) })
 
 	// Create the notes and note_reviews table schemas
 	// note_reviews is now required for analytics queries that filter out false positives

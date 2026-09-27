@@ -9,9 +9,25 @@
   import { getLogger } from './lib/utils/logger';
   import { createSafeMap } from './lib/utils/security';
   import { sseNotifications } from './lib/stores/sseNotifications'; // Initialize SSE toast handler
-  import { t } from './lib/i18n';
-  import { appState, initApp, MAX_RETRIES } from './lib/stores/appState.svelte';
+  import { t, getLocale } from './lib/i18n';
+  import {
+    loadDictionary,
+    PER_VISITOR_SPECIES_LOCALE_ENABLED,
+  } from './lib/stores/speciesDictionary.svelte';
+  import {
+    appState,
+    initApp,
+    MAX_RETRIES,
+    getSpeciesDictVersion,
+  } from './lib/stores/appState.svelte';
   import { navigation } from './lib/stores/navigation.svelte';
+  import {
+    resolveAnalyticsRedirect,
+    stripTrailingSlash,
+  } from './lib/desktop/features/analytics/registry/analyticsRouting';
+  // Type-only import (erased at build time, so GenericErrorPage stays lazily loaded via
+  // dynamic import below) used to type the dynamic component precisely instead of `any`.
+  import type GenericErrorPageComponent from './lib/desktop/views/GenericErrorPage.svelte';
   import { settingsActions } from './lib/stores/settings.js';
   import { activateWatchdog } from './lib/stores/connectionState.svelte';
   import WizardDialog from './lib/desktop/features/wizard/WizardDialog.svelte';
@@ -32,8 +48,14 @@
   }
 
   // Dynamic imports for heavy pages - properly typed component references
-  let Analytics = $state<Component | null>(null);
-  let AdvancedAnalytics = $state<Component | null>(null);
+  let SummaryPage = $state<Component | null>(null);
+  let ActivityPage = $state<Component | null>(null);
+  let TrendsPage = $state<Component | null>(null);
+  let BiodiversityPage = $state<Component | null>(null);
+  let NocturnalPage = $state<Component | null>(null);
+  let WeatherPage = $state<Component | null>(null);
+  let SoundscapePage = $state<Component | null>(null);
+  let ReviewPage = $state<Component | null>(null);
   let Species = $state<Component | null>(null);
   let Search = $state<Component | null>(null);
   let About = $state<Component | null>(null);
@@ -48,7 +70,7 @@
   let ErrorPage = $state<Component | null>(null);
   let ServerErrorPage = $state<Component | null>(null);
   let LiveStream = $state<Component | null>(null);
-  let GenericErrorPage = $state<any>(null);
+  let GenericErrorPage = $state<typeof GenericErrorPageComponent | null>(null);
 
   let currentRoute = $state<string>('');
   let currentPage = $state<string>('');
@@ -122,16 +144,52 @@
       component: 'species',
     },
     {
-      route: 'analytics',
-      page: 'analytics',
-      titleKey: 'navigation.analytics',
-      component: 'analytics',
+      route: 'analytics-summary',
+      page: 'analytics/summary',
+      titleKey: 'pageTitle.analyticsSummary',
+      component: 'analytics-summary',
     },
     {
-      route: 'advanced-analytics',
-      page: 'analytics/advanced',
-      titleKey: 'pageTitle.advancedAnalytics',
-      component: 'advanced-analytics',
+      route: 'analytics-activity',
+      page: 'analytics/activity',
+      titleKey: 'pageTitle.analyticsActivity',
+      component: 'analytics-activity',
+    },
+    {
+      route: 'analytics-trends',
+      page: 'analytics/trends',
+      titleKey: 'pageTitle.analyticsTrends',
+      component: 'analytics-trends',
+    },
+    {
+      route: 'analytics-biodiversity',
+      page: 'analytics/biodiversity',
+      titleKey: 'pageTitle.analyticsBiodiversity',
+      component: 'analytics-biodiversity',
+    },
+    {
+      route: 'analytics-nocturnal',
+      page: 'analytics/nocturnal',
+      titleKey: 'pageTitle.analyticsNocturnal',
+      component: 'analytics-nocturnal',
+    },
+    {
+      route: 'analytics-weather',
+      page: 'analytics/weather',
+      titleKey: 'pageTitle.analyticsWeather',
+      component: 'analytics-weather',
+    },
+    {
+      route: 'analytics-soundscape',
+      page: 'analytics/soundscape',
+      titleKey: 'pageTitle.analyticsSoundscape',
+      component: 'analytics-soundscape',
+    },
+    {
+      route: 'analytics-review',
+      page: 'analytics/review',
+      titleKey: 'pageTitle.analyticsReview',
+      component: 'analytics-review',
     },
     { route: 'search', page: 'search', titleKey: 'navigation.search', component: 'search' },
     {
@@ -181,6 +239,8 @@
   const systemSubpages: Record<string, string> = {
     '/database': 'system.sections.database',
     '/terminal': 'system.sections.terminal',
+    '/inference': 'system.sections.inference',
+    '/import-export': 'system.sections.importExport',
   };
 
   // Dynamic import helper
@@ -197,17 +257,58 @@
             LiveStream = module.default;
           }
           break;
-        case 'analytics':
-          if (!Analytics) {
-            const module = await import('./lib/desktop/features/analytics/pages/Analytics.svelte');
-            Analytics = module.default;
+        case 'analytics-summary':
+          if (!SummaryPage) {
+            const module =
+              await import('./lib/desktop/features/analytics/pages/SummaryPage.svelte');
+            SummaryPage = module.default;
           }
           break;
-        case 'advanced-analytics':
-          if (!AdvancedAnalytics) {
+        case 'analytics-activity':
+          if (!ActivityPage) {
             const module =
-              await import('./lib/desktop/features/analytics/pages/AdvancedAnalytics.svelte');
-            AdvancedAnalytics = module.default;
+              await import('./lib/desktop/features/analytics/pages/ActivityPage.svelte');
+            ActivityPage = module.default;
+          }
+          break;
+        case 'analytics-trends':
+          if (!TrendsPage) {
+            const module = await import('./lib/desktop/features/analytics/pages/TrendsPage.svelte');
+            TrendsPage = module.default;
+          }
+          break;
+        case 'analytics-biodiversity':
+          if (!BiodiversityPage) {
+            const module =
+              await import('./lib/desktop/features/analytics/pages/BiodiversityPage.svelte');
+            BiodiversityPage = module.default;
+          }
+          break;
+        case 'analytics-nocturnal':
+          if (!NocturnalPage) {
+            const module =
+              await import('./lib/desktop/features/analytics/pages/NocturnalPage.svelte');
+            NocturnalPage = module.default;
+          }
+          break;
+        case 'analytics-weather':
+          if (!WeatherPage) {
+            const module =
+              await import('./lib/desktop/features/analytics/pages/WeatherPage.svelte');
+            WeatherPage = module.default;
+          }
+          break;
+        case 'analytics-soundscape':
+          if (!SoundscapePage) {
+            const module =
+              await import('./lib/desktop/features/analytics/pages/SoundscapePage.svelte');
+            SoundscapePage = module.default;
+          }
+          break;
+        case 'analytics-review':
+          if (!ReviewPage) {
+            const module = await import('./lib/desktop/features/analytics/pages/ReviewPage.svelte');
+            ReviewPage = module.default;
           }
           break;
         case 'species':
@@ -348,9 +449,21 @@
     [uiPath('dashboard')]: findRouteConfig('dashboard'),
     [uiPath('live-stream')]: findRouteConfig('live-stream'),
     [uiPath('notifications')]: findRouteConfig('notifications'),
+    // Fallbacks if handleRouting's redirect does not fire (e.g. an aggressive
+    // sub_filter proxy rewrite that corrupts the literal path before handleRouting
+    // runs, or SSR). The normal flow never reaches these entries directly: the bare
+    // hub redirects to summary and the retired /advanced path redirects to activity.
+    [uiPath('analytics')]: findRouteConfig('analytics-summary'),
+    [uiPath('analytics', 'advanced')]: findRouteConfig('analytics-activity'),
     [uiPath('analytics', 'species')]: findRouteConfig('species'),
-    [uiPath('analytics', 'advanced')]: findRouteConfig('advanced-analytics'),
-    [uiPath('analytics')]: findRouteConfig('analytics'),
+    [uiPath('analytics', 'summary')]: findRouteConfig('analytics-summary'),
+    [uiPath('analytics', 'activity')]: findRouteConfig('analytics-activity'),
+    [uiPath('analytics', 'trends')]: findRouteConfig('analytics-trends'),
+    [uiPath('analytics', 'biodiversity')]: findRouteConfig('analytics-biodiversity'),
+    [uiPath('analytics', 'nocturnal')]: findRouteConfig('analytics-nocturnal'),
+    [uiPath('analytics', 'weather')]: findRouteConfig('analytics-weather'),
+    [uiPath('analytics', 'soundscape')]: findRouteConfig('analytics-soundscape'),
+    [uiPath('analytics', 'review')]: findRouteConfig('analytics-review'),
     [uiPath('search')]: findRouteConfig('search'),
     [uiPath('detections')]: findRouteConfig('detections'),
     [uiPath('about')]: findRouteConfig('about'),
@@ -397,6 +510,25 @@
   }
 
   function handleRouting(path: string): void {
+    // Canonicalize a trailing slash up front so the analytics redirect check, the
+    // detection-detail split, the system/settings subpage matching, and the normal
+    // pathToRouteMap lookup all operate on the same slashless path. The map keys are
+    // slashless, so /ui/analytics/nocturnal/ (a manually typed or bookmarked URL)
+    // would otherwise miss the map and 404. stripTrailingSlash preserves the root.
+    path = stripTrailingSlash(path);
+
+    // Analytics routes: redirect the bare hub, the retired /advanced path, and
+    // legacy ?tab= deep links onto the per-view routes (single hop), preserving
+    // other query params. resolveAnalyticsRedirect returns null when canonical.
+    const analyticsRedirect = resolveAnalyticsRedirect(
+      path,
+      typeof window !== 'undefined' ? window.location.search : ''
+    );
+    if (analyticsRedirect) {
+      navigation.redirect(analyticsRedirect);
+      return;
+    }
+
     // Special handling for detection detail pages
     if (UI_DETECTIONS_PREFIX_RE.test(path) && path.split('/').length > 3) {
       const pathParts = path.split('/');
@@ -413,8 +545,8 @@
 
     // Handle system and settings subpages
     if (UI_SYSTEM_PREFIX_RE.test(path)) {
-      const normalizedPath = path.endsWith('/') && path.length > 1 ? path.slice(0, -1) : path;
-      const exactMatch = pathToRouteMap.get(normalizedPath);
+      // path is already trailing-slash-normalized at the top of handleRouting.
+      const exactMatch = pathToRouteMap.get(path);
       if (exactMatch) {
         currentRoute = exactMatch.route;
         currentPage = exactMatch.page;
@@ -463,7 +595,8 @@
       currentPage = 'error-generic';
       // For dynamic error titles from URL, we use a generic error key
       pageTitleKey = 'common.error';
-      dynamicErrorCode = errorCode || '500';
+      // errorCode is already truthy in this branch, so no '500' fallback is needed.
+      dynamicErrorCode = errorCode;
       loadComponent('error-generic');
     } else {
       // Unknown route, default to 404
@@ -560,6 +693,25 @@
     }
   });
 
+  // Load the per-visitor species-name display dictionary on first paint and
+  // refetch whenever the UI locale changes. getLocale() reads reactive state, so
+  // reading it here re-runs the effect on locale switch. Fire-and-forget: the
+  // dashboard falls back to server-provided common names until this resolves.
+  //
+  // PARKED behind PER_VISITOR_SPECIES_LOCALE_ENABLED: while off, we never fetch
+  // the dictionary, so species names follow the server-side species language
+  // (settings.BirdNET.Locale) instead of the visitor's UI locale.
+  $effect(() => {
+    if (!PER_VISITOR_SPECIES_LOCALE_ENABLED) return;
+    const locale = getLocale();
+    // Read the version so the effect re-runs once app config populates it, fetching
+    // the content-addressed URL instead of staying on the unversioned (short-cache) one.
+    getSpeciesDictVersion();
+    loadDictionary(locale).catch(err => {
+      logger.error('Failed to load species dictionary', err, { locale });
+    });
+  });
+
   // Use $effect for browser back/forward navigation with automatic cleanup
   $effect(() => {
     const handlePopState = () => {
@@ -639,10 +791,22 @@
       {@render renderRoute(LiveStream)}
     {:else if currentRoute === 'notifications'}
       {@render renderRoute(Notifications)}
-    {:else if currentRoute === 'analytics'}
-      {@render renderRoute(Analytics)}
-    {:else if currentRoute === 'advanced-analytics'}
-      {@render renderRoute(AdvancedAnalytics)}
+    {:else if currentRoute === 'analytics-summary'}
+      {@render renderRoute(SummaryPage)}
+    {:else if currentRoute === 'analytics-activity'}
+      {@render renderRoute(ActivityPage)}
+    {:else if currentRoute === 'analytics-trends'}
+      {@render renderRoute(TrendsPage)}
+    {:else if currentRoute === 'analytics-biodiversity'}
+      {@render renderRoute(BiodiversityPage)}
+    {:else if currentRoute === 'analytics-nocturnal'}
+      {@render renderRoute(NocturnalPage)}
+    {:else if currentRoute === 'analytics-weather'}
+      {@render renderRoute(WeatherPage)}
+    {:else if currentRoute === 'analytics-soundscape'}
+      {@render renderRoute(SoundscapePage)}
+    {:else if currentRoute === 'analytics-review'}
+      {@render renderRoute(ReviewPage)}
     {:else if currentRoute === 'species'}
       {@render renderRoute(Species)}
     {:else if currentRoute === 'search'}

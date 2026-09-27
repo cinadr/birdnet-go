@@ -27,6 +27,8 @@
   import { formatLocalDateTime } from '$lib/utils/date';
   import { buildAppUrl, getCurrentPathWithQuery } from '$lib/utils/urlHelpers';
   import { loggers } from '$lib/utils/logger';
+  import { localizeSpeciesName } from '$lib/utils/speciesDisplay';
+  import SourceBadge from '$lib/desktop/features/dashboard/components/SourceBadge.svelte';
   import {
     Download,
     Camera,
@@ -44,8 +46,12 @@
     status: string;
     score: number;
     location_based: boolean;
-    latitude: number;
-    longitude: number;
+    // Optional: the API omits these when no location is configured (they are *float64
+    // with omitempty server-side). The backend sends them whenever location_based is
+    // true, but callers must still guard before toFixed() as defense in depth against
+    // a contract violation.
+    latitude?: number;
+    longitude?: number;
   }
 
   interface SpeciesInfo {
@@ -171,6 +177,7 @@
       speciesController?.abort();
       taxonomyController?.abort();
       attributionController?.abort();
+      cancelAttributionRetry();
     };
   });
 
@@ -183,21 +190,33 @@
     }
 
     detectionController?.abort();
-    detectionController = new AbortController();
+    const controller = new AbortController();
+    detectionController = controller;
+    const { signal } = controller;
 
     isLoadingDetection = true;
     detectionError = null;
+    // Reset the detail and its dependent data so a newer detection never briefly
+    // shows the previously viewed one's species/taxonomy/attribution while the
+    // secondary fetches are still in flight.
+    detection = null;
+    speciesInfo = null;
+    taxonomyInfo = null;
+    imageAttribution = null;
 
     try {
       const response = await fetch(buildAppUrl(`/api/v2/detections/${resolvedDetectionId}`), {
-        signal: detectionController.signal,
+        signal,
       });
 
-      if (detectionController?.signal.aborted) return;
+      // Check the captured signal, not the shared controller: a newer request may
+      // have replaced detectionController with a fresh, non-aborted instance, and
+      // checking that would let this stale response overwrite newer data.
+      if (signal.aborted) return;
 
       if (response.ok) {
         const data = (await response.json()) as Detection;
-        if (detectionController?.signal.aborted) return;
+        if (signal.aborted) return;
         detection = data;
       } else {
         let errorMessage: string;
@@ -228,41 +247,88 @@
         fetchImageAttribution();
       }
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
+      if (signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
         return;
       }
       detectionError =
         error instanceof Error ? error.message : t('detections.errors.loadFailed', { status: '' });
       logger.error('Error fetching detection:', error);
     } finally {
-      isLoadingDetection = false;
-      detectionController = null;
+      // Only the request that still owns the controller may reset shared state; a
+      // superseded request must not clear a newer request's loading flag/controller.
+      if (detectionController === controller) {
+        isLoadingDetection = false;
+        detectionController = null;
+      }
+    }
+  }
+
+  /**
+   * Delays before re-requesting attribution that answered "not resolved yet".
+   * Deliberately shorter and fewer than the thumbnail's own schedule: attribution is
+   * supporting detail, and the image itself is what the user is waiting on.
+   */
+  const ATTRIBUTION_RETRY_DELAYS_MS = [5000, 15000, 40000];
+
+  /**
+   * Pending 503 retry. Tracked separately from attributionController because the
+   * controller is released as soon as its request settles: without this the scheduled
+   * retry would still fire after the view was unmounted or navigated to a different
+   * detection, since aborting the (already-nulled) controller could no longer reach it.
+   */
+  let attributionRetryTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+
+  function cancelAttributionRetry() {
+    if (attributionRetryTimer !== undefined) {
+      globalThis.clearTimeout(attributionRetryTimer);
+      attributionRetryTimer = undefined;
     }
   }
 
   // Fetch image attribution metadata
-  async function fetchImageAttribution() {
+  async function fetchImageAttribution(attempt = 0) {
     if (!detection?.scientificName?.trim()) return;
 
     attributionController?.abort();
-    attributionController = new AbortController();
+    cancelAttributionRetry();
+    const controller = new AbortController();
+    attributionController = controller;
+    const { signal } = controller;
 
     try {
       const url = buildAppUrl(
         `/api/v2/media/species-image/info?name=${encodeURIComponent(detection.scientificName)}`
       );
-      const response = await fetch(url, { signal: attributionController?.signal });
-      if (attributionController?.signal.aborted) return;
+      const response = await fetch(url, { signal });
+      if (signal.aborted) return;
       if (response.ok) {
         const data = await response.json();
-        if (attributionController?.signal.aborted) return;
+        if (signal.aborted) return;
         imageAttribution = data as ImageAttribution;
+        return;
+      }
+      // 503 means the image is still being resolved in the background, not that it
+      // has no attribution. Without a retry the CC-BY/CC-BY-SA photo that the
+      // thumbnail's own retry recovers seconds later would be displayed with no
+      // author or licence credit, which is a licensing problem and not merely a
+      // cosmetic one.
+      if (response.status === 503 && attempt < ATTRIBUTION_RETRY_DELAYS_MS.length) {
+        const delay = ATTRIBUTION_RETRY_DELAYS_MS.at(attempt) ?? 0;
+        attributionRetryTimer = globalThis.setTimeout(() => {
+          attributionRetryTimer = undefined;
+          if (!signal.aborted) void fetchImageAttribution(attempt + 1);
+        }, delay);
+        // Return before the finally block releases the controller, so this request's
+        // signal stays reachable and an abort can still cancel the pending retry.
+        return;
       }
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') return;
-      // Attribution is non-critical — fail silently
+      if (signal.aborted || (error instanceof Error && error.name === 'AbortError')) return;
+      // Attribution is non-critical - fail silently
     } finally {
-      attributionController = null;
+      if (attributionController === controller) {
+        attributionController = null;
+      }
     }
   }
 
@@ -271,28 +337,32 @@
     if (!detection?.scientificName?.trim()) return;
 
     speciesController?.abort();
-    speciesController = new AbortController();
+    const controller = new AbortController();
+    speciesController = controller;
+    const { signal } = controller;
 
     try {
       const response = await fetch(
         buildAppUrl(
           `/api/v2/species?scientific_name=${encodeURIComponent(detection.scientificName)}`
         ),
-        { signal: speciesController?.signal }
+        { signal }
       );
-      if (speciesController?.signal.aborted) return;
+      if (signal.aborted) return;
       if (response.ok) {
         const data = await response.json();
-        if (speciesController?.signal.aborted) return;
+        if (signal.aborted) return;
         speciesInfo = data;
       }
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
+      if (signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
         return;
       }
       logger.error('Error fetching species info:', error);
     } finally {
-      speciesController = null;
+      if (speciesController === controller) {
+        speciesController = null;
+      }
     }
   }
 
@@ -301,7 +371,9 @@
     if (!detection?.scientificName?.trim()) return;
 
     taxonomyController?.abort();
-    taxonomyController = new AbortController();
+    const controller = new AbortController();
+    taxonomyController = controller;
+    const { signal } = controller;
 
     isLoadingTaxonomy = true;
     try {
@@ -309,22 +381,24 @@
         buildAppUrl(
           `/api/v2/species/taxonomy?scientific_name=${encodeURIComponent(detection.scientificName)}`
         ),
-        { signal: taxonomyController?.signal }
+        { signal }
       );
-      if (taxonomyController?.signal.aborted) return;
+      if (signal.aborted) return;
       if (response.ok) {
         const data = await response.json();
-        if (taxonomyController?.signal.aborted) return;
+        if (signal.aborted) return;
         taxonomyInfo = data;
       }
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
+      if (signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
         return;
       }
       logger.error('Error fetching taxonomy info:', error);
     } finally {
-      isLoadingTaxonomy = false;
-      taxonomyController = null;
+      if (taxonomyController === controller) {
+        isLoadingTaxonomy = false;
+        taxonomyController = null;
+      }
     }
   }
 
@@ -431,6 +505,7 @@
 <!-- Snippets for better organization -->
 
 {#snippet heroSection(det: Detection)}
+  {@const displayName = localizeSpeciesName(det.scientificName, det.commonName)}
   <section class="detection-hero-grid" aria-labelledby="species-heading">
     <!-- Identity Card -->
     <div class="hero-card hero-identity-card">
@@ -442,13 +517,16 @@
             src={buildAppUrl(
               `/api/v2/media/species-image?name=${encodeURIComponent(det.scientificName)}`
             )}
-            alt={det.commonName}
+            alt={displayName}
             class="w-full h-full object-contain"
             onerror={handleBirdImageError}
             loading="eager"
           />
           {#if imageAttribution?.authorName}
-            <div class="thumbnail-credit" aria-label="Image credit: {imageAttribution.authorName}">
+            <div
+              class="thumbnail-credit"
+              aria-label={t('common.aria.imageCredit', { name: imageAttribution.authorName })}
+            >
               <Camera size={10} class="credit-icon" />
               <span class="credit-text">{imageAttribution.authorName}</span>
               {#if imageAttribution.licenseName}
@@ -471,19 +549,26 @@
         <!-- Species identity -->
         <div class="hero-species">
           <h1 id="species-heading" class="species-display-name">
-            {det.commonName}
-            <span class="sr-only">detection details</span>
+            {displayName}
+            <span class="sr-only">{t('detections.detail.aria.speciesHeadingSuffix')}</span>
           </h1>
-          <p class="species-scientific-name" aria-label="Scientific name">
-            {det.scientificName}
+          <p class="species-scientific-name">
+            <span class="sr-only"
+              >{t('detections.detail.aria.scientificName')}:
+            </span>{det.scientificName}
           </p>
-          <div class="mt-3" aria-label="Species classification badges">
+          <div class="mt-3" aria-label={t('detections.detail.aria.classificationBadges')}>
             <VerificationBadges detection={det} size="sm" />
           </div>
         </div>
 
         <!-- Confidence -->
-        <div class="hero-confidence" aria-label="Detection confidence {det.confidence}%">
+        <div
+          class="hero-confidence"
+          aria-label={t('detections.detail.aria.confidence', {
+            confidence: Math.round((det.confidence ?? 0) * 100),
+          })}
+        >
           <ConfidenceCircle confidence={det.confidence} size="xl" />
         </div>
       </div>
@@ -532,7 +617,12 @@
                   <div class="taxonomy-subspecies-item">
                     <span class="italic">{subspecies.scientific_name}</span>
                     {#if subspecies.common_name}
-                      <span class="taxonomy-subspecies-common">{subspecies.common_name}</span>
+                      <span class="taxonomy-subspecies-common"
+                        >{localizeSpeciesName(
+                          subspecies.scientific_name,
+                          subspecies.common_name
+                        )}</span
+                      >
                     {/if}
                   </div>
                 {/each}
@@ -544,7 +634,11 @@
     {/if}
 
     <!-- Metadata Card -->
-    <div class="hero-card hero-metadata-card" role="region" aria-label="Detection metadata">
+    <div
+      class="hero-card hero-metadata-card"
+      role="region"
+      aria-label={t('detections.detail.aria.metadata')}
+    >
       <h3 class="section-heading">{t('detections.detail.observation')}</h3>
       <!-- Date & Time -->
       <div class="meta-section">
@@ -570,9 +664,19 @@
         </div>
       </div>
 
+      <!-- Audio Source -->
+      {#if det.source}
+        <div class="meta-section">
+          <SourceBadge detection={det} variant="inline" />
+        </div>
+      {/if}
+
       <!-- Weather -->
       {#if det.weather}
-        <div class="meta-section hero-weather" aria-label="Weather conditions at time of detection">
+        <div
+          class="meta-section hero-weather"
+          aria-label={t('detections.detail.aria.weatherConditions')}
+        >
           <WeatherDetails
             weatherIcon={det.weather.weatherIcon}
             weatherDescription={det.weather.description}
@@ -590,10 +694,10 @@
       {#if det.clipName}
         <div class="meta-section">
           <a
-            href={buildAppUrl(`/api/v2/media/audio/${det.clipName}`)}
+            href={buildAppUrl(`/api/v2/audio/${det.id}`)}
             download
             class="meta-download"
-            aria-label="Download audio clip for {det.commonName} detection"
+            aria-label={t('detections.detail.aria.downloadAudioClip', { name: displayName })}
           >
             <Download class="w-4 h-4" />
             <span>{t('media.audio.download')}</span>
@@ -619,7 +723,7 @@
               {(speciesInfo.rarity.score * 100).toFixed(0)}%
             </span>
           </div>
-          {#if speciesInfo.rarity.location_based}
+          {#if speciesInfo.rarity.location_based && speciesInfo.rarity.latitude != null && speciesInfo.rarity.longitude != null}
             <p class="text-xs text-[var(--color-base-content)]/40">
               {t('species.rarity.basedOnLocation', {
                 latitude: speciesInfo.rarity.latitude.toFixed(2),
@@ -682,15 +786,18 @@
   <section aria-labelledby="notes-heading">
     <h3 id="notes-heading" class="section-heading">{t('detections.notes.title')}</h3>
     {#if det.comments && det.comments.length > 0}
-      <div class="space-y-3" role="list" aria-label="Detection comments">
+      <div class="space-y-3" role="list" aria-label={t('detections.detail.aria.comments')}>
         {#each det.comments as comment (comment.id ?? comment.createdAt)}
           <article class="content-panel" role="listitem">
-            <p class="text-sm leading-relaxed" aria-label="Comment text">{comment.entry}</p>
-            <p
-              class="text-xs text-[var(--color-base-content)]/40 mt-2"
-              aria-label="Comment timestamp"
-            >
-              {formatLocalDateTime(new Date(comment.createdAt))}
+            <p class="text-sm leading-relaxed">
+              <span class="sr-only"
+                >{t('detections.detail.aria.commentText')}:
+              </span>{comment.entry}
+            </p>
+            <p class="text-xs text-[var(--color-base-content)]/40 mt-2">
+              <span class="sr-only"
+                >{t('detections.detail.aria.commentTimestamp')}:
+              </span>{formatLocalDateTime(new Date(comment.createdAt))}
             </p>
           </article>
         {/each}
@@ -707,13 +814,15 @@
 {/snippet}
 
 <!-- Main component -->
-<main class="col-span-12 detection-detail" aria-label="Detection details">
+<main class="col-span-12 detection-detail" aria-label={t('detections.detail.aria.mainRegion')}>
   <!-- Loading state with live region -->
   <div role="status" aria-live="polite" class="sr-only">
     {#if isLoadingDetection}
       {t('detections.aria.loading')}
     {:else if detection}
-      {t('detections.aria.loaded', { species: detection.commonName })}
+      {t('detections.aria.loaded', {
+        species: localizeSpeciesName(detection.scientificName, detection.commonName),
+      })}
     {:else if detectionError}
       {t('detections.aria.error', { error: detectionError })}
     {/if}
@@ -783,46 +892,55 @@
     <!-- Hero Section -->
     {@render heroSection(detection)}
 
-    <!-- Media Section -->
-    <section class="surface-card" aria-labelledby="media-heading">
-      <div class="p-5 md:p-6">
-        <h2 id="media-heading" class="section-heading !mb-0">
-          {t('detections.media.title')}
-        </h2>
-        {#if clipExtractionEnabled}
-          <p class="text-sm text-[var(--color-base-content)]/60 mt-0.5 mb-4">
-            {t('detections.media.clipHint')}
-          </p>
-        {:else}
-          <div class="mb-3"></div>
-        {/if}
-        <div role="region" aria-label="Audio recording and spectrogram for {detection.commonName}">
-          <div class="detail-audio-container">
-            <AudioPlayer
-              audioUrl={buildAppUrl(`/api/v2/audio/${detection.id}`)}
-              detectionId={detection.id.toString()}
-              showSpectrogram={true}
-              spectrogramSize="lg"
-              spectrogramRaw={false}
-              responsive={true}
-              className="w-full"
-              enableClipExtraction={clipExtractionEnabled}
-              clipLabel={`${detection.commonName}_${detection.date}_${detection.time.replace(/:/g, '-')}`}
-            />
+    <!-- Media Section (shown only when this detection has a clip) -->
+    {#if detection.clipName}
+      <section class="surface-card" aria-labelledby="media-heading">
+        <div class="p-5 md:p-6">
+          <h2 id="media-heading" class="section-heading !mb-0">
+            {t('detections.media.title')}
+          </h2>
+          {#if clipExtractionEnabled}
+            <p class="text-sm text-[var(--color-base-content)]/60 mt-0.5 mb-4">
+              {t('detections.media.clipHint')}
+            </p>
+          {:else}
+            <div class="mb-3"></div>
+          {/if}
+          <div
+            role="region"
+            aria-label={t('detections.detail.aria.audioRecordingFor', {
+              name: localizeSpeciesName(detection.scientificName, detection.commonName),
+            })}
+          >
+            <div class="detail-audio-container">
+              <AudioPlayer
+                audioUrl={buildAppUrl(`/api/v2/audio/${detection.id}`)}
+                detectionId={detection.id.toString()}
+                showSpectrogram={true}
+                spectrogramSize="lg"
+                spectrogramRaw={false}
+                responsive={true}
+                className="w-full"
+                enableClipExtraction={clipExtractionEnabled}
+                clipLabel={`${detection.commonName}_${detection.date}_${detection.time.replace(/:/g, '-')}`}
+                modelType={detection.modelType}
+              />
+            </div>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
+    {/if}
 
     <!-- Tabbed Content -->
     <section class="surface-card" aria-labelledby="tabs-heading">
       <div class="p-5 md:p-6">
-        <h2 id="tabs-heading" class="sr-only">Detection information tabs</h2>
+        <h2 id="tabs-heading" class="sr-only">{t('detections.detail.aria.tabsHeading')}</h2>
 
         <!-- Tab Navigation -->
-        <div class="tab-nav" role="tablist" aria-label="Detection details tabs">
+        <div class="tab-nav" role="tablist" aria-label={t('detections.detail.aria.tabList')}>
           {#each ['overview', 'history', 'notes'] as tab (tab)}
             <button
+              type="button"
               id="tab-{tab}"
               role="tab"
               class="tab-button"
@@ -838,6 +956,7 @@
           {/each}
           {#if canReview}
             <button
+              type="button"
               id="tab-review"
               role="tab"
               class="tab-button"
@@ -1011,7 +1130,7 @@
     }
   }
 
-  /* Metadata card — vertical stacked sections */
+  /* Metadata card - vertical stacked sections */
   .hero-metadata-card {
     display: flex;
     flex-direction: column;
@@ -1034,7 +1153,7 @@
     border-top: 1px solid var(--border-100);
   }
 
-  /* Date — prominent visual anchor for the time section */
+  /* Date - prominent visual anchor for the time section */
   .meta-date {
     font-size: 1rem;
     font-weight: 600;
@@ -1042,7 +1161,7 @@
     letter-spacing: -0.01em;
   }
 
-  /* Time + time-of-day badge — inline, secondary */
+  /* Time + time-of-day badge - inline, secondary */
   .meta-time-row {
     display: flex;
     align-items: center;
@@ -1074,7 +1193,7 @@
     opacity: 1;
   }
 
-  /* Species thumbnail — 4:3 to match avicommons 320×240 source images */
+  /* Species thumbnail - 4:3 to match avicommons 320×240 source images */
   .hero-thumbnail {
     position: relative;
     width: 100%;
@@ -1095,7 +1214,7 @@
     }
   }
 
-  /* Photo credit — bottom-right corner of thumbnail */
+  /* Photo credit - bottom-right corner of thumbnail */
   .thumbnail-credit {
     position: absolute;
     right: 0;
@@ -1175,7 +1294,7 @@
     letter-spacing: 0.01em;
   }
 
-  /* Time of day badge — theme-safe via alpha transparency */
+  /* Time of day badge - theme-safe via alpha transparency */
   .time-of-day-badge {
     display: inline-flex;
     align-items: center;
@@ -1207,7 +1326,7 @@
     background: oklch(78% 0.12 30deg / 0.4);
   }
 
-  /* Weather in metadata card — consistent typographic scale */
+  /* Weather in metadata card - consistent typographic scale */
   .hero-weather :global(.wd-container) {
     flex-direction: column;
     align-items: flex-start;

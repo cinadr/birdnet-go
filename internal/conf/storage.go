@@ -33,6 +33,26 @@ var (
 	loadMu           sync.Mutex
 )
 
+// defaultConfigCreatedPath records the path of a default config generated
+// during this process's Load(). internal/conf must NOT import
+// internal/diagnostics (import cycle), so the journal event is emitted by
+// diagnostics.RecordBoot reading this marker via its caller.
+var defaultConfigCreatedPath atomic.Pointer[string]
+
+// markDefaultConfigCreated records that a default config was generated.
+func markDefaultConfigCreated(path string) {
+	defaultConfigCreatedPath.Store(&path)
+}
+
+// DefaultConfigCreated reports whether this process generated a default
+// config file during Load, and at which path.
+func DefaultConfigCreated() (created bool, path string) {
+	if p := defaultConfigCreatedPath.Load(); p != nil && *p != "" {
+		return true, *p
+	}
+	return false, ""
+}
+
 // Load reads the configuration file and environment variables into GlobalConfig.
 //
 //nolint:gocognit // Config loading is inherently complex; splitting adds indirection without clarity.
@@ -92,8 +112,49 @@ func Load() (*Settings, error) {
 		persistMigration(settings, "source models")
 	}
 
+	// Pin every pre-Phase-4 empty source/stream model list to ["birdnet"] once, then
+	// stamp ConfigVersion. Before Phase 4 an empty list meant the built-in v2.4;
+	// afterwards it means the orchestrator's default targets. Runs before
+	// ReconcileMisplacedAudioSources so a relocated source is pinned before its list
+	// is copied to the new stream (model de-privilege epic, Phase 4).
+	if settings.MigrateSourceTargetDefaults() {
+		persistMigration(settings, "source target defaults")
+	}
+
+	// Write the implicit BirdNET v2.4 enable out to models.enabled once (moving it to the
+	// front, or prepending it), before the implicit enable is dropped from the orchestrator,
+	// so every existing install keeps loading exactly the models it did in the same order
+	// (model de-privilege epic, Phase 4). Runs after MigrateSourceTargetDefaults (a version-0
+	// file gets both) and before MigrateModelIDAliases, which then canonicalizes any catalog
+	// spelling.
+	if settings.MigrateModelsEnabledAuthoritative() {
+		persistMigration(settings, "models enabled authoritative")
+	}
+
+	// Relocate stream URLs misconfigured under realtime.audio.sources (meant
+	// for local sound cards) into realtime.rtsp.streams so the runtime opens
+	// them with FFmpeg instead of failing to open them as ALSA devices.
+	if settings.ReconcileMisplacedAudioSources() {
+		persistMigration(settings, "misplaced audio sources")
+	}
+
 	if streamEnabledMigrated {
 		persistMigration(settings, "stream enabled defaults")
+	}
+
+	// Canonicalize catalog-style model IDs (e.g. "perch-v2" -> "perch_v2") so a
+	// hand-edited config persists a single canonical spelling and model
+	// install/uninstall bookkeeping stays consistent. Runs before validation so
+	// the normalized IDs are what gets checked.
+	if settings.MigrateModelIDAliases() {
+		persistMigration(settings, "model ID aliases")
+	}
+
+	// Retire the dead birdnet.version field (model de-privilege epic, Phase 3).
+	// Runs before validation so a migrated "3.0" config that now enables
+	// birdnet_v3.0 is validated in its post-migration shape.
+	if settings.MigrateBirdNETVersion() {
+		persistMigration(settings, "birdnet version")
 	}
 
 	// Validate multi-model configuration
@@ -121,41 +182,57 @@ func Load() (*Settings, error) {
 		persistMigration(settings, "LocationConfigured flag")
 	}
 
+	// Heal a lossy export left with a blank bitrate by writing the documented
+	// default back once. Runs before normalizeIncompleteFeatures so persistMigration
+	// saves the file with every feature's on-disk enabled state intact; that pass
+	// disables switched-on-but-unconfigured integrations in memory only, and those
+	// disables must never be written to disk.
+	if settings.migrateEmptyLossyExportBitrate() {
+		persistMigration(settings, "empty lossy export bitrate")
+	}
+
 	// Auto-generate SessionSecret if not set (for backward compatibility)
 	if err := ensureSessionSecret(settings); err != nil {
 		return nil, err
 	}
 
-	// Validate settings
-	if err := ValidateSettings(settings); err != nil {
-		// Check if it's just a validation warning (contains fallback info)
-		var validationErr ValidationError
-		if errors.As(err, &validationErr) {
-			// Report configuration issues to telemetry for debugging
-			for _, errMsg := range validationErr.Errors {
-				if strings.Contains(errMsg, "fallback") || strings.Contains(errMsg, "not supported") ||
-					strings.Contains(errMsg, "OAuth authentication warning") {
-					// This is a warning - report to telemetry but don't fail
-					GetLogger().Warn("Configuration warning", logger.String("message", errMsg))
-					// Store the warning for later telemetry reporting
-					settings.ValidationWarnings = append(settings.ValidationWarnings, errMsg)
-					// Note: Telemetry reporting will happen later in birdnet package when Sentry is initialized
-				} else {
-					// This is a real validation error - fail the config load
-					return nil, errors.New(err).
-						Category(errors.CategoryValidation).
-						Context("component", "settings").
-						Context("error_msg", errMsg).
-						Build()
-				}
-			}
+	// Mint the profiling token when pprof is enabled without an authentication
+	// provider. Deliberately non-fatal: without a token the pprof routes refuse
+	// every request, which is the safe outcome, and a diagnostics feature must
+	// not be able to stop the application from starting.
+	if generated, err := EnsureProfilingToken(settings); err != nil {
+		GetLogger().Warn("Failed to generate profiling token; the profiling endpoints will refuse requests", logger.Error(err))
+	} else if generated {
+		// A token that is minted but never written to disk is worse than none:
+		// it gates the endpoints for this process while being unreadable (it is
+		// never logged), and the next start mints a different one. Say so
+		// plainly, because persistMigration is silent when there is no config
+		// file to write and only warns on a write failure.
+		if viper.ConfigFileUsed() == "" {
+			GetLogger().Warn("Generated a profiling token but there is no config file to save it to; " +
+				"the profiling endpoints will be unusable and the token will differ on the next start")
 		} else {
-			// Other validation errors should fail the config load
-			return nil, errors.New(err).
-				Category(errors.CategoryValidation).
-				Context("component", "settings").
-				Build()
+			persistMigration(settings, "profiling token")
 		}
+	}
+
+	// Resolve features that are switched on but were never configured, before the
+	// validators get to see them. A config file can age into that state across
+	// upgrades, and rejecting the file leaves no UI in which to correct it, so
+	// those features are disabled or defaulted with a warning instead. This is
+	// deliberately scoped to loading a file: the settings API validates without
+	// normalizing, so a half-finished section submitted from the UI is still
+	// answered with an error the user can act on rather than silently discarded.
+	// See validate_incomplete.go for the policy and the per-rule reasoning.
+	normalizeIncompleteFeatures(settings)
+
+	// Validate settings. Any error ValidateSettings returns is a fatal
+	// misconfiguration that must block startup; non-fatal findings live on the
+	// separate settings.ValidationWarnings channel (recorded during config
+	// migration and normalization), never demoted from a fatal error by matching
+	// its message text.
+	if err := finalizeValidation(ValidateSettings(settings)); err != nil {
+		return nil, err
 	}
 
 	// Adjust seasonal tracking for the user's hemisphere so the settings
@@ -170,10 +247,44 @@ func Load() (*Settings, error) {
 		)
 	}
 
+	// Log the effective privacy and dog-bark filter thresholds once at load.
+	// These values are otherwise silent until a detection is actually filtered,
+	// which makes reports of a configured threshold "not taking effect"
+	// impossible to localize from logs or a support dump: this line records
+	// exactly what was read from config.yaml into the running settings.
+	GetLogger().Info("privacy and dog-bark filter settings loaded",
+		logger.Bool("privacy_enabled", settings.Realtime.PrivacyFilter.Enabled),
+		logger.Float32("privacy_confidence", settings.Realtime.PrivacyFilter.Confidence),
+		logger.Bool("dogbark_enabled", settings.Realtime.DogBarkFilter.Enabled),
+		logger.Float32("dogbark_confidence", settings.Realtime.DogBarkFilter.Confidence))
+
 	// Publish the loaded settings atomically. Readers calling GetSettings
 	// immediately after this point see this snapshot.
 	settingsInstance.Store(settings)
 	return settings, nil
+}
+
+// finalizeValidation converts the outcome of ValidateSettings into a fatal
+// configuration error, or nil when the settings are acceptable.
+//
+// Severity is structural: every error a validator returns (collected into
+// ValidationError.Errors) is fatal and blocks startup. Non-fatal configuration
+// findings use a separate channel, Settings.ValidationWarnings, written during
+// config migration, during normalizeIncompleteFeatures, and by the few validators
+// that normalize a value rather than rejecting it. Severity is never inferred from
+// the error message text;
+// an earlier heuristic that demoted errors whose message contained substrings
+// like "fallback" or "not supported" to warnings could silently start the app
+// with invalid config, so it was removed.
+func finalizeValidation(err error) error {
+	if err == nil {
+		return nil
+	}
+	return errors.New(err).
+		Component("conf").
+		Category(errors.CategoryValidation).
+		Context("component", "settings").
+		Build()
 }
 
 // initViper initializes viper with default values and reads the configuration file.
@@ -258,8 +369,7 @@ func initViper() error {
 
 		// For default path search: ConfigFileNotFoundError means no config
 		// exists yet, so create one with defaults.
-		var configFileNotFoundError viper.ConfigFileNotFoundError
-		if errors.As(err, &configFileNotFoundError) {
+		if _, ok := errors.AsType[viper.ConfigFileNotFoundError](err); ok {
 			return createDefaultConfig()
 		}
 
@@ -271,6 +381,15 @@ func initViper() error {
 	}
 
 	return nil
+}
+
+// stampConfigVersion prefixes a freshly generated config with the current config version so
+// this build's one-shot migrations never treat a file it just created as an older build's
+// file. Without it MigrateSourceTargetDefaults would pin its default source to ["birdnet"]
+// and MigrateModelsEnabledAuthoritative would re-add "birdnet" after a later fresh N=0
+// install removed it (model de-privilege epic, Phase 4).
+func stampConfigVersion(yamlText string) string {
+	return fmt.Sprintf("configversion: %d\n", currentConfigVersion) + yamlText
 }
 
 // createDefaultConfig creates a default config file and writes it to the default config path
@@ -287,6 +406,14 @@ func createDefaultConfig() error {
 	if err != nil {
 		return err
 	}
+
+	// Stamp the freshly generated file at the current config version so this build's one-shot
+	// migrations never treat a file it just created as an older build's file (model
+	// de-privilege epic, Phase 4). The AutoEnableMigrated marker is intentionally NOT stamped
+	// here: a fresh install still runs the classifier's one-shot auto-enable capture once
+	// (a no-op on a truly fresh install), and Phase 6 sets the marker when the default template
+	// moves to enabled: [].
+	defaultConfig = stampConfigVersion(defaultConfig)
 
 	// If the basicauth secret is not set, generate a random one
 	if viper.GetString("security.basicauth.clientsecret") == "" {
@@ -332,6 +459,10 @@ func createDefaultConfig() error {
 			Context("path", configPath).
 			Build()
 	}
+	// Record that this process generated a default config so the diagnostics
+	// boot journal can emit a config_defaulted event (conf must not import
+	// diagnostics, so the marker is read by the caller of RecordBoot).
+	markDefaultConfigCreated(configPath)
 
 	fmt.Println("Created default config file at:", configPath)
 	return viper.ReadInConfig()
@@ -478,6 +609,17 @@ func SaveSettings() error {
 	}
 
 	GetLogger().Info("Settings saved successfully", logger.String("path", configPath))
+
+	// Record the privacy and dog-bark filter thresholds that were just
+	// persisted. Paired with the load-time log above, this brackets the config
+	// round-trip: comparing the value a user set in the UI against what actually
+	// reaches disk here isolates a frontend/save drop from a load-side problem
+	// without needing to reproduce a detection.
+	GetLogger().Info("persisted privacy and dog-bark filter settings",
+		logger.Bool("privacy_enabled", settingsCopy.Realtime.PrivacyFilter.Enabled),
+		logger.Float32("privacy_confidence", settingsCopy.Realtime.PrivacyFilter.Confidence),
+		logger.Bool("dogbark_enabled", settingsCopy.Realtime.DogBarkFilter.Enabled),
+		logger.Float32("dogbark_confidence", settingsCopy.Realtime.DogBarkFilter.Confidence))
 	return nil
 }
 

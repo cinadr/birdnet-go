@@ -1,6 +1,8 @@
 package analysis
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -39,10 +41,10 @@ func TestResolveModelTargets_EmptyInput(t *testing.T) {
 	loaded := map[string]classifier.ModelInfo{
 		"BirdNET_V2.4": {ID: "BirdNET_V2.4", Spec: classifier.ModelSpec{SampleRate: 48000}},
 	}
-	targets := resolveModelTargets(nil, loaded)
+	targets, _ := resolveModelTargets(nil, loaded)
 	assert.Empty(t, targets, "nil config IDs should return nil")
 
-	targets = resolveModelTargets([]string{}, loaded)
+	targets, _ = resolveModelTargets([]string{}, loaded)
 	assert.Empty(t, targets, "empty config IDs should return empty")
 }
 
@@ -57,7 +59,7 @@ func TestResolveModelTargets_SingleModel(t *testing.T) {
 		},
 	}
 
-	targets := resolveModelTargets([]string{"birdnet"}, loaded)
+	targets, _ := resolveModelTargets([]string{"birdnet"}, loaded)
 	require.Len(t, targets, 1)
 	assert.Equal(t, "BirdNET_V2.4", targets[0].ID)
 	assert.Equal(t, 48000, targets[0].Spec.SampleRate)
@@ -77,7 +79,7 @@ func TestResolveModelTargets_MultiModel(t *testing.T) {
 		},
 	}
 
-	targets := resolveModelTargets([]string{"birdnet", "perch_v2"}, loaded)
+	targets, _ := resolveModelTargets([]string{"birdnet", "perch_v2"}, loaded)
 	require.Len(t, targets, 2)
 
 	// Collect results into a map for order-independent assertion.
@@ -100,7 +102,7 @@ func TestResolveModelTargets_UnknownConfigID(t *testing.T) {
 	}
 
 	// "unknown_model" is not in configToRegistryID, so it should be skipped.
-	targets := resolveModelTargets([]string{"unknown_model"}, loaded)
+	targets, _ := resolveModelTargets([]string{"unknown_model"}, loaded)
 	assert.Empty(t, targets)
 }
 
@@ -115,7 +117,7 @@ func TestResolveModelTargets_KnownButNotLoaded(t *testing.T) {
 		},
 	}
 
-	targets := resolveModelTargets([]string{"birdnet", "perch_v2"}, loaded)
+	targets, _ := resolveModelTargets([]string{"birdnet", "perch_v2"}, loaded)
 	require.Len(t, targets, 1, "only birdnet should resolve, perch_v2 is not loaded")
 	assert.Equal(t, "BirdNET_V2.4", targets[0].ID)
 }
@@ -171,4 +173,124 @@ func TestBuildLivenessConfig_PartialOverride(t *testing.T) {
 	assert.Equal(t, defaults.RetryBackoff, cfg.RetryBackoff, "unset field should use default")
 	assert.Equal(t, defaults.CooldownAfterRecov, cfg.CooldownAfterRecov, "unset field should use default")
 	assert.Equal(t, defaults.EscalationTimeout, cfg.EscalationTimeout, "unset field should use default")
+}
+
+// TestClassifyExportDir covers the clip cleanup guard's directory classification:
+// a usable directory runs cleanup, a missing directory is the benign export-off
+// default (Debug/skip), and a stat error or a non-directory path is unexpected
+// (Warn/skip).
+func TestClassifyExportDir(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+
+	realDir := filepath.Join(base, "clips")
+	require.NoError(t, os.Mkdir(realDir, 0o755))
+
+	regularFile := filepath.Join(base, "clips.txt")
+	require.NoError(t, os.WriteFile(regularFile, []byte("not a dir"), 0o600))
+
+	missing := filepath.Join(base, "does-not-exist")
+
+	tests := []struct {
+		name         string
+		path         string
+		wantState    exportDirState
+		wantErrIsNil bool
+	}{
+		{name: "existing directory is usable", path: realDir, wantState: exportDirUsable, wantErrIsNil: true},
+		{name: "missing directory is benign", path: missing, wantState: exportDirMissing, wantErrIsNil: false},
+		{name: "regular file is bad without error", path: regularFile, wantState: exportDirBad, wantErrIsNil: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			state, err := classifyExportDir(tt.path)
+			assert.Equal(t, tt.wantState, state)
+			if tt.wantErrIsNil {
+				assert.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				assert.True(t, os.IsNotExist(err), "missing path should report a not-exist error")
+			}
+		})
+	}
+}
+
+// TestResolveModelTargets_ReportsSkippedModels covers the reporting half of the
+// GitHub #4201 / #4204 fix: a model the config assigns to a source but which is
+// not loaded must be handed back to the caller, not merely logged, so the user
+// can be told the source is running with fewer models than they configured.
+func TestResolveModelTargets_ReportsSkippedModels(t *testing.T) {
+	t.Parallel()
+
+	loaded := map[string]classifier.ModelInfo{
+		"BirdNET_V2.4": {ID: "BirdNET_V2.4", Spec: classifier.ModelSpec{SampleRate: 48000}},
+	}
+
+	t.Run("configured but not loaded is reported", func(t *testing.T) {
+		t.Parallel()
+		targets, skipped := resolveModelTargets([]string{"birdnet", "perch_v2"}, loaded)
+		require.Len(t, targets, 1)
+		assert.Equal(t, "BirdNET_V2.4", targets[0].ID)
+		assert.Equal(t, []string{"perch_v2"}, skipped)
+	})
+
+	t.Run("unknown model ID is reported", func(t *testing.T) {
+		t.Parallel()
+		targets, skipped := resolveModelTargets([]string{"birdnet", "not_a_model"}, loaded)
+		require.Len(t, targets, 1)
+		assert.Equal(t, []string{"not_a_model"}, skipped)
+	})
+
+	t.Run("all models loaded reports nothing", func(t *testing.T) {
+		t.Parallel()
+		targets, skipped := resolveModelTargets([]string{"birdnet"}, loaded)
+		require.Len(t, targets, 1)
+		assert.Empty(t, skipped)
+	})
+}
+
+// TestUnregisteredModelNames_PrimaryFallbackIsNotReportedAsAssigned pins the
+// rule that only models the configuration actually assigns are named to the
+// user. When a source resolves to no loaded target, registerConsumersForSources
+// falls back to the primary model; the user assigned nothing there, so naming
+// the built-in primary as "assigned to this audio source" would be false and
+// would point the user at a gallery entry offering no action for a permanent
+// model. Caught on PR review by two independent reviewers.
+func TestUnregisteredModelNames_PrimaryFallbackIsNotReportedAsAssigned(t *testing.T) {
+	t.Parallel()
+
+	primary := []classifier.ModelInfo{{ID: "BirdNET_V2.4"}}
+
+	t.Run("a primary-fallback set is passed as nil and reports nothing", func(t *testing.T) {
+		t.Parallel()
+		// The call site passes assigned=nil when usedPrimaryFallback is true.
+		got := unregisteredModelNames(nil, nil, nil, nil)
+		assert.Empty(t, got, "a source that assigns no model must produce no report")
+	})
+
+	t.Run("an explicitly assigned model that did not register is reported", func(t *testing.T) {
+		t.Parallel()
+		got := unregisteredModelNames(nil, nil, primary, nil)
+		require.Len(t, got, 1, "an assigned but unallocated model must be reported")
+		assert.Equal(t, modelDisplayName("BirdNET_V2.4"), got[0])
+	})
+
+	t.Run("an allocated model is not reported", func(t *testing.T) {
+		t.Parallel()
+		got := unregisteredModelNames(nil, nil, primary, map[string]bool{"BirdNET_V2.4": true})
+		assert.Empty(t, got, "a model with an analysis buffer is analyzing and must not be reported")
+	})
+
+	t.Run("config-assigned but unresolvable models are still reported", func(t *testing.T) {
+		t.Parallel()
+		// skipped carries models the configuration names but that never resolved,
+		// which stay reportable even when the resolved set came from the fallback.
+		got := unregisteredModelNames(nil, []string{"perch_v2"}, nil, nil)
+		require.Len(t, got, 1)
+		assert.Equal(t, modelDisplayName("perch_v2"), got[0])
+	})
 }

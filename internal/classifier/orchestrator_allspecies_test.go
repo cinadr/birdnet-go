@@ -1,6 +1,7 @@
 package classifier
 
 import (
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -43,29 +44,39 @@ func hasScientificName(scores []SpeciesScore, sci string) bool {
 func buildAllSpeciesOrchestrator(t *testing.T, settings *conf.Settings, rf *fakeUniversalRangeFilter, nonPrimaryID string, nonPrimaryLabels []string) *Orchestrator {
 	t.Helper()
 
-	const primaryID = "BirdNET_V3"
+	const primaryID = RegistryIDBirdNETV24
 
 	bn := &BirdNET{
-		Settings:     settings,
-		speciesCache: make(map[string]*speciesCacheEntry),
+		Settings: settings,
 	}
 	bn.ModelInfo.ID = primaryID
-	bn.rangeFilter = rf
 
 	nonPrimary := &mockModelInstance{
 		id:     nonPrimaryID,
 		labels: nonPrimaryLabels,
 	}
 
-	return &Orchestrator{
-		Settings:  settings,
-		ModelInfo: bn.ModelInfo, // mirror the primary, as NewOrchestrator does
-		primary:   bn,
+	o := &Orchestrator{
+		Settings: settings,
 		models: map[string]*modelEntry{
 			primaryID:    {instance: bn},
 			nonPrimaryID: {instance: nonPrimary},
 		},
 	}
+	o.settingsAtomic.Store(settings)
+	o.rangeFilter = newTestRangeFilterService(rf)
+	// Publish the participant snapshot the way a production reload does, so the shared
+	// display/gate helper (which reads state.participants, not the live model map) sees
+	// both classifiers. Anchored on v2.4 with a universal backend loaded.
+	o.rangeFilter.state.Store(&rangeFilterState{
+		backend:       rf,
+		kind:          rfKindGeomodelV3,
+		participants:  []participantLabels{{id: primaryID, labels: settings.BirdNET.Labels}, {id: nonPrimaryID, labels: nonPrimaryLabels}},
+		anchoredOnV24: true,
+		coveredLabels: settings.BirdNET.Labels,
+		generation:    1,
+	})
+	return o
 }
 
 // universalSettings returns settings configured so the primary routes through
@@ -243,11 +254,9 @@ func TestGetAllProbableSpecies_NonUniversalPrimary(t *testing.T) {
 	primaryRF := &fakeRangeFilter{scores: []float32{0.9}}
 
 	bn := &BirdNET{
-		Settings:     settings,
-		speciesCache: make(map[string]*speciesCacheEntry),
+		Settings: settings,
 	}
 	bn.ModelInfo.ID = "BirdNET_V2.4"
-	bn.rangeFilter = primaryRF
 
 	nonPrimary := &mockModelInstance{
 		id: "Perch_V2",
@@ -259,14 +268,23 @@ func TestGetAllProbableSpecies_NonUniversalPrimary(t *testing.T) {
 	}
 
 	o := &Orchestrator{
-		Settings:  settings,
-		ModelInfo: bn.ModelInfo, // mirror the primary, as NewOrchestrator does
-		primary:   bn,
+		Settings:    settings,
+		rangeFilter: newTestRangeFilterService(primaryRF),
 		models: map[string]*modelEntry{
 			"BirdNET_V2.4": {instance: bn},
 			"Perch_V2":     {instance: nonPrimary},
 		},
 	}
+	// Publish the participant snapshot a reload builds; the legacy (non-universal) backend
+	// has no geomodel vocabulary, so the shared helper fails the non-v2.4 participant open.
+	o.rangeFilter.state.Store(&rangeFilterState{
+		backend:       primaryRF,
+		kind:          rfKindMDataV2,
+		participants:  []participantLabels{{id: "BirdNET_V2.4", labels: settings.BirdNET.Labels}, {id: "Perch_V2", labels: nonPrimary.labels}},
+		anchoredOnV24: true,
+		coveredLabels: settings.BirdNET.Labels,
+		generation:    1,
+	})
 
 	scores, err := o.GetAllProbableSpeciesWithSettings(time.Now(), 0, settings)
 	require.NoError(t, err)
@@ -290,9 +308,117 @@ func TestGetAllProbableSpecies_NonUniversalPrimary(t *testing.T) {
 		"non-universal primary: excluded species must not be added")
 }
 
-// TestGetAllProbableSpecies_BatModelSkipped verifies the bat model is never
-// iterated when collecting non-primary species.
-func TestGetAllProbableSpecies_BatModelSkipped(t *testing.T) {
+// TestGetAllProbableSpecies_BatModelAlwaysActive verifies that bat-model species
+// are included as always-active (score 1.0) even though the bat model is skipped
+// by the range-filter loop: bats have no geomodel, so they cannot be
+// location-filtered. The exclude list is still honored, and PassUnmappedSpecies
+// is irrelevant to bats (they are not geomodel-mapped at all).
+func TestGetAllProbableSpecies_BatModelAlwaysActive(t *testing.T) {
+	settings := universalSettings(t)
+	// Prove bats are added regardless of the geomodel pass-through gate.
+	settings.BirdNET.RangeFilter.PassUnmappedSpecies = false
+	settings.Realtime.Species.Exclude = []string{"Pipistrellus pipistrellus"}
+
+	rf := &fakeUniversalRangeFilter{
+		geoLabels: []string{"Turdus merula_Common Blackbird"},
+		scores: []SpeciesScore{
+			{Score: 0.9, Label: "Turdus merula_Common Blackbird"},
+		},
+		rawScores: []float32{0.9},
+	}
+
+	const primaryID = RegistryIDBirdNETV24
+	bn := &BirdNET{
+		Settings: settings,
+	}
+	bn.ModelInfo.ID = primaryID
+
+	batModel := &mockModelInstance{
+		id: RegistryIDBat,
+		labels: []string{
+			"Myotis daubentonii",        // included at 1.0
+			"Pipistrellus pipistrellus", // excluded, must not appear
+		},
+	}
+
+	o := &Orchestrator{
+		Settings:    settings,
+		rangeFilter: newTestRangeFilterService(rf),
+		models: map[string]*modelEntry{
+			primaryID:     {instance: bn},
+			RegistryIDBat: {instance: batModel},
+		},
+	}
+
+	scores, err := o.GetAllProbableSpeciesWithSettings(time.Now(), 0, settings)
+	require.NoError(t, err)
+
+	got, ok := scoreForLabel(scores, "Myotis daubentonii")
+	require.True(t, ok, "bat species must be included as always-active even with PassUnmappedSpecies disabled")
+	assert.InDelta(t, 1.0, got.Score, 0.0001, "bat species must be scored 1.0 (always active)")
+
+	assert.False(t, hasScientificName(scores, "Pipistrellus pipistrellus"),
+		"excluded bat species must not be added")
+}
+
+// TestGetAllProbableSpecies_SortedByScoreDescending verifies that always-active
+// secondary-model species (score 1.0), which are appended after the primary's
+// pre-sorted range-filtered scores, are re-sorted into the merged result so the
+// full list stays ordered by score descending. Without the final re-sort a 1.0
+// bat species trails behind a low-probability bird, which the CSV export and the
+// range-filter test preview render in raw (unsorted) order.
+func TestGetAllProbableSpecies_SortedByScoreDescending(t *testing.T) {
+	settings := universalSettings(t)
+	settings.BirdNET.RangeFilter.PassUnmappedSpecies = false
+
+	// Primary returns a single low-probability bird; the bat is appended at 1.0
+	// after the primary's descending sort, so an unsorted merge would place it last.
+	rf := &fakeUniversalRangeFilter{
+		geoLabels: []string{"Turdus merula_Common Blackbird"},
+		scores: []SpeciesScore{
+			{Score: 0.02, Label: "Turdus merula_Common Blackbird"},
+		},
+		rawScores: []float32{0.02},
+	}
+
+	const primaryID = RegistryIDBirdNETV24
+	bn := &BirdNET{
+		Settings: settings,
+	}
+	bn.ModelInfo.ID = primaryID
+
+	batModel := &mockModelInstance{
+		id:     RegistryIDBat,
+		labels: []string{"Myotis daubentonii"},
+	}
+
+	o := &Orchestrator{
+		Settings:    settings,
+		rangeFilter: newTestRangeFilterService(rf),
+		models: map[string]*modelEntry{
+			primaryID:     {instance: bn},
+			RegistryIDBat: {instance: batModel},
+		},
+	}
+
+	scores, err := o.GetAllProbableSpeciesWithSettings(time.Now(), 0, settings)
+	require.NoError(t, err)
+	require.Len(t, scores, 2)
+
+	// The always-active bat (1.0) must sort ahead of the low-probability bird (0.02).
+	assert.Equal(t, "Myotis daubentonii", scores[0].Label,
+		"always-active 1.0 species must sort before lower-scored birds")
+	assert.InDelta(t, 1.0, scores[0].Score, 0.0001)
+
+	// The merged list as a whole must be ordered by score descending.
+	assert.True(t, sort.IsSorted(ByScore(scores)),
+		"merged species list must be sorted by score descending")
+}
+
+// TestGetAllProbableSpecies_BatModelDedupedByScientificName verifies that a bat
+// species already represented via another model is not duplicated by the bat
+// always-active pass.
+func TestGetAllProbableSpecies_BatModelDedupedByScientificName(t *testing.T) {
 	settings := universalSettings(t)
 	settings.BirdNET.RangeFilter.PassUnmappedSpecies = true
 
@@ -304,25 +430,23 @@ func TestGetAllProbableSpecies_BatModelSkipped(t *testing.T) {
 		rawScores: []float32{0.9},
 	}
 
-	const primaryID = "BirdNET_V3"
+	const primaryID = RegistryIDBirdNETV24
 	bn := &BirdNET{
-		Settings:     settings,
-		speciesCache: make(map[string]*speciesCacheEntry),
+		Settings: settings,
 	}
 	bn.ModelInfo.ID = primaryID
-	bn.rangeFilter = rf
 
-	batModel := &mockModelInstance{
-		id:     RegistryIDBat,
-		labels: []string{"Myotis daubentonii"},
-	}
+	// A non-bat secondary model emits the same scientific name (geomodel-unmapped,
+	// so it passes through at 1.0); the bat model must not duplicate it.
+	perch := &mockModelInstance{id: "Perch_V2", labels: []string{"Myotis daubentonii"}}
+	batModel := &mockModelInstance{id: RegistryIDBat, labels: []string{"Myotis daubentonii"}}
 
 	o := &Orchestrator{
-		Settings:  settings,
-		ModelInfo: bn.ModelInfo, // mirror the primary, as NewOrchestrator does
-		primary:   bn,
+		Settings:    settings,
+		rangeFilter: newTestRangeFilterService(rf),
 		models: map[string]*modelEntry{
 			primaryID:     {instance: bn},
+			"Perch_V2":    {instance: perch},
 			RegistryIDBat: {instance: batModel},
 		},
 	}
@@ -330,8 +454,13 @@ func TestGetAllProbableSpecies_BatModelSkipped(t *testing.T) {
 	scores, err := o.GetAllProbableSpeciesWithSettings(time.Now(), 0, settings)
 	require.NoError(t, err)
 
-	assert.False(t, hasScientificName(scores, "Myotis daubentonii"),
-		"bat model species must never be collected")
+	count := 0
+	for _, s := range scores {
+		if detection.ExtractScientificName(s.Label) == "Myotis daubentonii" {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "bat species already represented via another model must not be duplicated")
 }
 
 // TestGetAllProbableSpecies_DeterministicDedupByModelID verifies that when two
@@ -351,13 +480,11 @@ func TestGetAllProbableSpecies_DeterministicDedupByModelID(t *testing.T) {
 		rawScores: []float32{0.9},
 	}
 
-	const primaryID = "BirdNET_V3"
+	const primaryID = RegistryIDBirdNETV24
 	bn := &BirdNET{
-		Settings:     settings,
-		speciesCache: make(map[string]*speciesCacheEntry),
+		Settings: settings,
 	}
 	bn.ModelInfo.ID = primaryID
-	bn.rangeFilter = rf
 
 	// Both secondary models emit the same scientific name (geomodel-unmapped, so
 	// it passes through) but with different label strings. The lower model ID
@@ -366,15 +493,25 @@ func TestGetAllProbableSpecies_DeterministicDedupByModelID(t *testing.T) {
 	higher := &mockModelInstance{id: "zzz_model", labels: []string{"Aratinga solstitialis_Sun Parakeet"}}
 
 	o := &Orchestrator{
-		Settings:  settings,
-		ModelInfo: bn.ModelInfo, // mirror the primary, as NewOrchestrator does
-		primary:   bn,
+		Settings:    settings,
+		rangeFilter: newTestRangeFilterService(rf),
 		models: map[string]*modelEntry{
 			primaryID:   {instance: bn},
 			"aaa_model": {instance: lower},
 			"zzz_model": {instance: higher},
 		},
 	}
+	// Publish the participant snapshot in the deterministic order a reload builds (v2.4
+	// first, then byte-sorted by ID), so the lower model ID is processed first and its label
+	// wins the scientific-name dedup independent of Go's randomized map iteration.
+	o.rangeFilter.state.Store(&rangeFilterState{
+		backend:       rf,
+		kind:          rfKindGeomodelV3,
+		participants:  []participantLabels{{id: primaryID, labels: settings.BirdNET.Labels}, {id: "aaa_model", labels: lower.labels}, {id: "zzz_model", labels: higher.labels}},
+		anchoredOnV24: true,
+		coveredLabels: settings.BirdNET.Labels,
+		generation:    1,
+	})
 
 	scores, err := o.GetAllProbableSpeciesWithSettings(time.Now(), 0, settings)
 	require.NoError(t, err)

@@ -12,7 +12,9 @@ tmp_dir = "tmp"  # Temporary directory for build artifacts
   cmd = """
     # Enable CGO for TensorFlow Lite integration
     export CGO_ENABLED=1
-    export CGO_CFLAGS="-I${HOME}/src/tensorflow"
+    # Headers live in the project-local cache populated by `task check-tensorflow`.
+    # air runs this build command from the project root, so $(pwd) resolves there.
+    export CGO_CFLAGS="-I$(pwd)/.cache/tensorflow"
 
     # Set library paths based on OS
     if [ "$(uname)" = "Darwin" ]; then
@@ -28,10 +30,15 @@ tmp_dir = "tmp"  # Temporary directory for build artifacts
 
     export CGO_LDFLAGS="-L${TFLITE_LIB_DIR} -ltensorflowlite_c"
 
-    # Build the Go application with version and build date
+    # Build the Go application with version and build date.
+    # Match only real release tags (v* and nightly-*) so the auto-update
+    # "manifest" prerelease tag is not picked as the nearest ancestor.
+    # Resolve the version into a variable first to avoid nested quoting inside
+    # -ldflags, and fall back to "unknown" when git is unavailable.
+    app_version="$(git describe --tags --always --match 'v*' --match 'nightly-*' 2>/dev/null || echo unknown)"
     go build -ldflags "-s -w -r /usr/local/lib \
       -X 'main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)' \
-      -X 'main.version=$(git describe --tags --always)'" \
+      -X main.version=$app_version" \
       -o ./tmp/main .
 
     # On macOS, add the Homebrew library path to rpath since Go's -r flag

@@ -5,10 +5,8 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	stderrors "errors"
 	"io"
 	"net"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -48,7 +46,7 @@ type client struct {
 	lastConnErrMsg     string    // last connection error message for deduplication
 	connErrCount       int       // count of consecutive identical connection errors
 	lastConnErrLogTime time.Time // when the repeated error was last logged
-	// Publish suppression while disconnected — prevents Sentry flood when broker is unreachable.
+	// Publish suppression while disconnected: prevents Sentry flood when broker is unreachable.
 	// When the connection drops, the first publish failure is logged as a warning.
 	// Subsequent publish attempts are silently suppressed until the connection is restored.
 	disconnected           bool      // true after onConnectionLost, false after onConnect
@@ -77,8 +75,13 @@ func NewClient(settings *conf.Settings, observabilityMetrics *observability.Metr
 	config.TLS.ClientCert = settings.Realtime.MQTT.TLS.ClientCert
 	config.TLS.ClientKey = settings.Realtime.MQTT.TLS.ClientKey
 
-	// Auto-detect TLS from broker URL scheme
-	if strings.HasPrefix(config.Broker, "ssl://") || strings.HasPrefix(config.Broker, "tls://") || strings.HasPrefix(config.Broker, "mqtts://") {
+	// Validate the broker address up front (fail fast on a malformed address)
+	// and auto-detect TLS from its scheme.
+	parts, err := parseBroker(config.Broker)
+	if err != nil {
+		return nil, err
+	}
+	if schemeImpliesTLS(parts.scheme) {
 		config.TLS.Enabled = true
 		log.Info("TLS enabled based on broker URL scheme")
 	}
@@ -86,7 +89,7 @@ func NewClient(settings *conf.Settings, observabilityMetrics *observability.Metr
 	// Configure LWT (Last Will and Testament) for Home Assistant availability tracking
 	if settings.Realtime.MQTT.HomeAssistant.Enabled {
 		config.LWT.Enabled = true
-		config.LWT.Topic = config.Topic + "/status"
+		config.LWT.Topic = StatusTopic(config.Topic)
 		config.LWT.Payload = "offline"
 		config.LWT.QoS = 1
 		config.LWT.Retain = true
@@ -320,8 +323,7 @@ func (c *client) handleConnectionFailure(connectErr error, clientToConnect mqtt.
 	c.mu.Unlock()
 
 	// Enhance error if needed
-	var enhancedErr *errors.EnhancedError
-	if !errors.As(connectErr, &enhancedErr) {
+	if _, ok := errors.AsType[*errors.EnhancedError](connectErr); !ok {
 		connectErr = errors.New(connectErr).
 			Component("mqtt").
 			Category(errors.CategoryMQTTConnection).
@@ -369,7 +371,7 @@ func (c *client) publishInternal(ctx context.Context, topic, payload string, ret
 	// Fast path: if we know the connection is down, suppress publish attempts
 	// to avoid flooding Sentry and logs with repeated errors.
 	// Returns nil (not an error) because detection data is already persisted
-	// in the database before MQTT publish — a missed notification during a
+	// in the database before MQTT publish: a missed notification during a
 	// broker outage is graceful degradation, not data loss. Callers do not
 	// need to retry suppressed publishes.
 	if suppressed := c.suppressPublishWhileDisconnected(topic); suppressed {
@@ -427,7 +429,7 @@ func (c *client) publishInternal(ctx context.Context, topic, payload string, ret
 		}
 
 		// Get potentially reconnected client and retry regardless of IsConnected()
-		// state — let attemptPublish determine the actual outcome.
+		// state: let attemptPublish determine the actual outcome.
 		c.mu.RLock()
 		retryClient := c.internalClient
 		c.mu.RUnlock()
@@ -524,7 +526,7 @@ func IsTransientConnectionError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if stderrors.Is(err, io.EOF) || stderrors.Is(err, io.ErrUnexpectedEOF) {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
 	msg := strings.ToLower(err.Error())
@@ -661,8 +663,8 @@ func (c *client) configureClientOptions(log logger.Logger) (*mqtt.ClientOptions,
 
 // performDNSResolution resolves the broker hostname if it's not an IP address
 func (c *client) performDNSResolution(ctx context.Context, log logger.Logger) error {
-	// Parse the broker URL
-	u, err := url.Parse(c.config.Broker)
+	// Parse the broker address (tolerates scheme-less "host:port" addresses)
+	parts, err := parseBroker(c.config.Broker)
 	if err != nil {
 		log.Error("Invalid broker URL",
 			logger.Error(err))
@@ -678,7 +680,7 @@ func (c *client) performDNSResolution(ctx context.Context, log logger.Logger) er
 	// Perform DNS resolution (potentially blocking network I/O)
 	dnsCtx, dnsCancel := context.WithTimeout(ctx, DNSLookupTimeout)
 	defer dnsCancel()
-	host := u.Hostname()
+	host := parts.host
 	if net.ParseIP(host) == nil {
 		log.Debug("Resolving broker hostname",
 			logger.String("host", host))
@@ -699,8 +701,7 @@ func (c *client) performDNSResolution(ctx context.Context, log logger.Logger) er
 			log.Error("Failed to resolve broker hostname",
 				logger.String("host", host),
 				logger.Error(err))
-			var dnsErr *net.DNSError
-			if errors.As(err, &dnsErr) {
+			if dnsErr, ok := errors.AsType[*net.DNSError](err); ok {
 				c.mu.Lock()
 				c.lastConnAttempt = time.Now()
 				c.mu.Unlock()
@@ -984,10 +985,7 @@ func (c *client) onConnectionLost(client mqtt.Client, err error) {
 	// Mark as disconnected to suppress publish errors until reconnected.
 	// This prevents flooding Sentry with ~1000+ publish errors when the broker is unreachable.
 	c.mu.Lock()
-	c.disconnected = true
-	c.publishSuppressed = false
-	c.suppressedPublishCount = 0
-	c.disconnectedSince = time.Now()
+	c.markDisconnectedLocked()
 	c.mu.Unlock()
 
 	// Publish MQTT disconnected alert event
@@ -1013,9 +1011,71 @@ func (c *client) onConnectionLost(client mqtt.Client, err error) {
 	}
 }
 
+// markDisconnectedLocked records the start of an outage and resets publish
+// suppression, so the first publish of the outage logs a warning before the rest
+// go silent.
+// CALLER MUST HOLD c.mu LOCK
+func (c *client) markDisconnectedLocked() {
+	c.disconnected = true
+	c.publishSuppressed = false
+	c.suppressedPublishCount = 0
+	c.disconnectedSince = time.Now()
+}
+
+// StartReconnectLoop arms the reconnect timer after a failed initial connection
+// attempt, so the client recovers once the broker becomes reachable.
+//
+// onConnectionLost is the only other trigger for reconnection, and paho invokes
+// it solely for connections that were established at least once. A client whose
+// first Connect failed therefore has nothing driving it, and stays dead until
+// the process restarts: the broker being unreachable for a few seconds while
+// the network comes up at boot is enough to lose MQTT for the whole run.
+//
+// Marking the client disconnected routes publishes through
+// suppressPublishWhileDisconnected, so callers get the same graceful
+// degradation as a mid-session outage (one warning, then silence) rather than
+// an error per publish.
+//
+// Safe to call when already connected, and after Disconnect: the former returns
+// without touching connection state, and the latter finds reconnectStop closed
+// in startReconnectTimer and arms nothing.
+func (c *client) StartReconnectLoop() {
+	c.mu.Lock()
+	// A live connection needs nothing. Connect can report failure for a
+	// connection that came up late (see buildNotConnectedError), so this is
+	// reachable, and marking a healthy client down would suppress its publishes.
+	if c.internalClient != nil && c.internalClient.IsConnected() {
+		c.mu.Unlock()
+		GetLogger().Debug("Client already connected, not arming reconnect loop",
+			logger.String("broker", c.config.Broker),
+			logger.String("client_id", c.config.ClientID))
+		return
+	}
+	// Guarded: onConnectionLost may already have recorded this outage, and
+	// overwriting its start time would understate the outage in logs.
+	if !c.disconnected {
+		c.markDisconnectedLocked()
+	}
+	c.mu.Unlock()
+
+	c.startReconnectTimer()
+}
+
 func (c *client) startReconnectTimer() {
 	c.mu.Lock() // Lock to safely modify reconnectTimer
 	defer c.mu.Unlock()
+
+	// Checked under the same lock Disconnect uses to close reconnectStop, so a
+	// concurrent shutdown cannot land between the check and the assignment below
+	// and leave behind a timer it has already given up the chance to stop.
+	select {
+	case <-c.reconnectStop:
+		GetLogger().Debug("Reconnect mechanism stopped, not arming reconnect timer",
+			logger.String("broker", c.config.Broker),
+			logger.String("client_id", c.config.ClientID))
+		return
+	default:
+	}
 
 	// Ensure we don't start multiple timers if called rapidly
 	if c.reconnectTimer != nil {
@@ -1132,8 +1192,7 @@ func (c *client) handleReconnectFailure(log logger.Logger, err error) {
 
 	// Extract error category for metrics (always track, even when log is suppressed)
 	errorCategory := "generic"
-	var enhancedErr *errors.EnhancedError
-	if errors.As(err, &enhancedErr) {
+	if enhancedErr, ok := errors.AsType[*errors.EnhancedError](err); ok {
 		errorCategory = enhancedErr.GetCategory()
 	}
 	c.metrics.IncrementErrorsWithCategory(errorCategory, "reconnect_failed")
@@ -1172,9 +1231,11 @@ func (c *client) createTLSConfig() (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-// extractBrokerHostname extracts the hostname from the broker URL
+// extractBrokerHostname extracts the hostname from the broker address for use
+// as the TLS ServerName. It routes through parseBroker so scheme-less and IPv6
+// broker addresses are handled consistently with the rest of the package.
 func (c *client) extractBrokerHostname() (string, error) {
-	u, err := url.Parse(c.config.Broker)
+	parts, err := parseBroker(c.config.Broker)
 	if err != nil {
 		return "", errors.Newf("failed to parse broker URL for TLS config: %v", err).
 			Component("mqtt").
@@ -1182,7 +1243,7 @@ func (c *client) extractBrokerHostname() (string, error) {
 			Context("broker", c.config.Broker).
 			Build()
 	}
-	return u.Hostname(), nil
+	return parts.host, nil
 }
 
 // loadCACertificate loads the CA certificate into the TLS config

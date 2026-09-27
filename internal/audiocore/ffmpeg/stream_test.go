@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,13 +16,20 @@ import (
 	"github.com/tphakala/birdnet-go/internal/audiocore/buffer"
 )
 
-// ffmpegTimeoutFlag is the FFmpeg connection timeout flag emitted for all source
-// types, including RTSP (the legacy -stimeout was removed in FFmpeg 5.x+).
+// ffmpegTimeoutFlag is the connection timeout flag expected when these tests
+// pin a modern FFmpeg version, including RTSP sources.
 const ffmpegTimeoutFlag = "-timeout"
 
-// ffmpegLegacyTimeoutFlag is the deprecated RTSP -stimeout flag. It must never be
-// emitted, but is still recognised when present in user-supplied parameters.
+// ffmpegLegacyTimeoutFlag is the legacy RTSP timeout flag. It must not be
+// emitted for the modern FFmpeg version pinned by these tests.
 const ffmpegLegacyTimeoutFlag = "-stimeout"
+
+const testFFmpegModernMajor = 7
+
+var seedFFmpegMajorRefs struct {
+	sync.Mutex
+	counts map[string]int
+}
 
 // newTestConfig returns a minimal StreamConfig suitable for unit tests.
 func newTestConfig() StreamConfig {
@@ -36,7 +44,37 @@ func newTestConfig() StreamConfig {
 		FFmpegPath: "/usr/bin/ffmpeg",
 		Transport:  "tcp",
 		LogLevel:   "error",
+		// Auto mode exercises the historical audio-only-first request plus the
+		// reactive fallback. The default (empty) is now full-stream, so tests that
+		// assert audio-only behavior set auto explicitly here.
+		MediaMode: "auto",
 	}
+}
+
+// seedFFmpegMajor pins the FFmpeg major version for a path in the package cache
+// so timeout-flag selection is deterministic in tests, independent of the
+// host's installed ffmpeg. It cleans up after the test.
+func seedFFmpegMajor(t *testing.T, ffmpegPath string, major int) {
+	t.Helper()
+
+	seedFFmpegMajorRefs.Lock()
+	if seedFFmpegMajorRefs.counts == nil {
+		seedFFmpegMajorRefs.counts = make(map[string]int)
+	}
+	seedFFmpegMajorRefs.counts[ffmpegPath]++
+	ffmpegMajorCache.Store(ffmpegPath, major)
+	seedFFmpegMajorRefs.Unlock()
+
+	t.Cleanup(func() {
+		seedFFmpegMajorRefs.Lock()
+		defer seedFFmpegMajorRefs.Unlock()
+
+		seedFFmpegMajorRefs.counts[ffmpegPath]--
+		if seedFFmpegMajorRefs.counts[ffmpegPath] == 0 {
+			delete(seedFFmpegMajorRefs.counts, ffmpegPath)
+			ffmpegMajorCache.Delete(ffmpegPath)
+		}
+	})
 }
 
 // newTestStream creates a Stream for testing with no-op callbacks.
@@ -113,6 +151,18 @@ func (s *Stream) getTotalBytesReceivedForTest() int64 {
 	s.bytesReceivedMu.RLock()
 	defer s.bytesReceivedMu.RUnlock()
 	return s.totalBytesReceived
+}
+
+func (s *Stream) getRestartCountForTest() int {
+	s.restartCountMu.Lock()
+	defer s.restartCountMu.Unlock()
+	return s.restartCount
+}
+
+func (s *Stream) setRestartCountForTest(count int) {
+	s.restartCountMu.Lock()
+	defer s.restartCountMu.Unlock()
+	s.restartCount = count
 }
 
 func (s *Stream) getStreamCreatedAtForTest() time.Time {
@@ -415,37 +465,6 @@ func TestStream_CircuitBreakerCooldown(t *testing.T) {
 	assert.Equal(t, 0, stream.getConsecutiveFailures())
 }
 
-func TestStream_DataRateCalculation(t *testing.T) {
-	t.Parallel()
-
-	stream := newTestStream(t)
-	calc := stream.dataRateCalc
-
-	calc.addSample(1024)
-	calc.addSample(2048)
-	calc.addSample(1536)
-
-	rate := calc.getRate()
-	assert.Greater(t, rate, 0.0)
-}
-
-func TestStream_DataRateCalculator_EmptyRate(t *testing.T) {
-	t.Parallel()
-
-	calc := newDataRateCalculator(dataRateWindowSize)
-	assert.InDelta(t, 0.0, calc.getRate(), 0.001)
-}
-
-func TestStream_DataRateCalculator_SingleSampleRate(t *testing.T) {
-	t.Parallel()
-
-	calc := newDataRateCalculator(dataRateWindowSize)
-	calc.addSample(1024)
-
-	rate := calc.getRate()
-	assert.InDelta(t, 1024.0, rate, 0.01, "Single recent sample should return instantaneous rate")
-}
-
 func TestStream_HealthTracking(t *testing.T) {
 	t.Parallel()
 
@@ -682,14 +701,20 @@ func TestStream_ConditionalFailureReset(t *testing.T) {
 
 	stream := newTestStream(t)
 
-	// Set up: failures, process start time, and bytes.
+	// Set up: failures, restart count, process start time, and bytes.
 	stream.setConsecutiveFailures(5)
+	stream.setRestartCountForTest(4)
 	stream.setProcessStartTimeForTest(time.Now().Add(-circuitBreakerMinStabilityTime - time.Second))
 	stream.setTotalBytesReceivedForTest(circuitBreakerMinStabilityBytes + 1)
 
 	stream.conditionalFailureReset(stream.getTotalBytesReceivedForTest())
 
 	assert.Equal(t, 0, stream.getConsecutiveFailures(), "Failures should be reset after stable operation")
+	// The restart count drives the escalating restart backoff. It must be reset
+	// alongside the circuit breaker after sustained stable operation, otherwise
+	// widely-spaced transient stalls keep escalating the backoff even though each
+	// fault recovered cleanly (issue #4080).
+	assert.Equal(t, 0, stream.getRestartCountForTest(), "Restart count should be reset after stable operation")
 }
 
 func TestStream_ConditionalFailureReset_NotEnoughTime(t *testing.T) {
@@ -698,12 +723,14 @@ func TestStream_ConditionalFailureReset_NotEnoughTime(t *testing.T) {
 	stream := newTestStream(t)
 
 	stream.setConsecutiveFailures(5)
+	stream.setRestartCountForTest(4)
 	stream.setProcessStartTimeForTest(time.Now().Add(-5 * time.Second))
 	stream.setTotalBytesReceivedForTest(circuitBreakerMinStabilityBytes + 1)
 
 	stream.conditionalFailureReset(stream.getTotalBytesReceivedForTest())
 
 	assert.Equal(t, 5, stream.getConsecutiveFailures(), "Failures should NOT be reset without enough runtime")
+	assert.Equal(t, 4, stream.getRestartCountForTest(), "Restart count should NOT be reset without enough runtime")
 }
 
 func TestStream_ConditionalFailureReset_NotEnoughBytes(t *testing.T) {
@@ -712,12 +739,107 @@ func TestStream_ConditionalFailureReset_NotEnoughBytes(t *testing.T) {
 	stream := newTestStream(t)
 
 	stream.setConsecutiveFailures(5)
+	stream.setRestartCountForTest(4)
 	stream.setProcessStartTimeForTest(time.Now().Add(-circuitBreakerMinStabilityTime - time.Second))
 	stream.setTotalBytesReceivedForTest(100)
 
 	stream.conditionalFailureReset(100)
 
 	assert.Equal(t, 5, stream.getConsecutiveFailures(), "Failures should NOT be reset without enough bytes")
+	assert.Equal(t, 4, stream.getRestartCountForTest(), "Restart count should NOT be reset without enough bytes")
+}
+
+// TestStream_ConditionalFailureReset_RestartCount is the focused regression for
+// issue #4080: the restart backoff escalates across widely-spaced transient
+// stalls because the circuit breaker's failure counter is reset on stable
+// recovery while the restart count that drives the backoff duration is not.
+// conditionalFailureReset must clear the restart count under the same stability
+// gate, and independently of whether the circuit breaker still has failures to
+// clear (the circuit-breaker cooldown and normal process exits can drive
+// consecutiveFailures to zero while the restart count stays high).
+func TestStream_ConditionalFailureReset_RestartCount(t *testing.T) {
+	t.Parallel()
+
+	const stableAge = -circuitBreakerMinStabilityTime - time.Second
+	const unstableAge = -5 * time.Second
+
+	tests := []struct {
+		name                 string
+		processStartAge      time.Duration
+		processStartZero     bool
+		totalBytes           int64
+		initialRestartCount  int
+		initialFailures      int
+		wantRestartCount     int
+		wantConsecutiveFails int
+	}{
+		{
+			name:                 "stable operation resets restart count and failures",
+			processStartAge:      stableAge,
+			totalBytes:           circuitBreakerMinStabilityBytes + 1,
+			initialRestartCount:  4,
+			initialFailures:      3,
+			wantRestartCount:     0,
+			wantConsecutiveFails: 0,
+		},
+		{
+			name:                 "stable operation resets restart count even when failures already zero",
+			processStartAge:      stableAge,
+			totalBytes:           circuitBreakerMinStabilityBytes + 1,
+			initialRestartCount:  4,
+			initialFailures:      0,
+			wantRestartCount:     0,
+			wantConsecutiveFails: 0,
+		},
+		{
+			name:                 "not enough runtime leaves restart count untouched",
+			processStartAge:      unstableAge,
+			totalBytes:           circuitBreakerMinStabilityBytes + 1,
+			initialRestartCount:  4,
+			initialFailures:      3,
+			wantRestartCount:     4,
+			wantConsecutiveFails: 3,
+		},
+		{
+			name:                 "not enough bytes leaves restart count untouched",
+			processStartAge:      stableAge,
+			totalBytes:           circuitBreakerMinStabilityBytes - 1,
+			initialRestartCount:  4,
+			initialFailures:      3,
+			wantRestartCount:     4,
+			wantConsecutiveFails: 3,
+		},
+		{
+			name:                 "zero process start time is a no-op",
+			processStartZero:     true,
+			totalBytes:           circuitBreakerMinStabilityBytes + 1,
+			initialRestartCount:  4,
+			initialFailures:      3,
+			wantRestartCount:     4,
+			wantConsecutiveFails: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			stream := newTestStream(t)
+
+			stream.setConsecutiveFailures(tt.initialFailures)
+			stream.setRestartCountForTest(tt.initialRestartCount)
+			if tt.processStartZero {
+				stream.setProcessStartTimeForTest(time.Time{})
+			} else {
+				stream.setProcessStartTimeForTest(time.Now().Add(tt.processStartAge))
+			}
+			stream.setTotalBytesReceivedForTest(tt.totalBytes)
+
+			stream.conditionalFailureReset(tt.totalBytes)
+
+			assert.Equal(t, tt.wantRestartCount, stream.getRestartCountForTest(), "restart count")
+			assert.Equal(t, tt.wantConsecutiveFails, stream.getConsecutiveFailures(), "consecutive failures")
+		})
+	}
 }
 
 func TestValidateTimeout(t *testing.T) {
@@ -794,6 +916,7 @@ func TestStream_BuildFFmpegInputArgs_RTSP(t *testing.T) {
 	t.Parallel()
 
 	cfg := newTestConfig()
+	seedFFmpegMajor(t, cfg.FFmpegPath, testFFmpegModernMajor)
 	cfg.Type = "rtsp"
 	stream := newTestStreamWithConfig(t, &cfg)
 
@@ -809,6 +932,7 @@ func TestStream_BuildFFmpegInputArgs_HTTP(t *testing.T) {
 	t.Parallel()
 
 	cfg := newTestConfig()
+	seedFFmpegMajor(t, cfg.FFmpegPath, testFFmpegModernMajor)
 	cfg.URL = "http://192.168.1.183/stream"
 	cfg.Type = "http"
 	stream := newTestStreamWithConfig(t, &cfg)
@@ -824,6 +948,7 @@ func TestStream_BuildFFmpegInputArgs_InvalidTimeout(t *testing.T) {
 	t.Parallel()
 
 	cfg := newTestConfig() // default is RTSP
+	seedFFmpegMajor(t, cfg.FFmpegPath, testFFmpegModernMajor)
 	stream := newTestStreamWithConfig(t, &cfg)
 
 	params := []string{"-timeout", "abc", "-loglevel", "debug"}
@@ -850,6 +975,8 @@ func TestStream_BuildFFmpegInputArgs_InvalidTimeout(t *testing.T) {
 
 func TestStream_BuildFFmpegInputArgs_ProtocolSpecific(t *testing.T) {
 	t.Parallel()
+	cfg := newTestConfig()
+	seedFFmpegMajor(t, cfg.FFmpegPath, testFFmpegModernMajor)
 
 	tests := []struct {
 		name              string
@@ -1073,8 +1200,8 @@ func TestStream_ErrorContextTracking(t *testing.T) {
 	assert.Nil(t, stream.getLastErrorContext())
 	assert.Empty(t, stream.getErrorContexts())
 
-	ctx1 := &ErrorContext{ErrorType: ErrTypeConnectionTimeout, PrimaryMessage: "test1"}
-	ctx2 := &ErrorContext{ErrorType: ErrTypeConnectionRefused, PrimaryMessage: "test2"}
+	ctx1 := &audiocore.StreamErrorContext{ErrorType: audiocore.ErrTypeConnectionTimeout, PrimaryMessage: "test1"}
+	ctx2 := &audiocore.StreamErrorContext{ErrorType: audiocore.ErrTypeConnectionRefused, PrimaryMessage: "test2"}
 
 	stream.recordErrorContext(ctx1)
 	assert.Equal(t, ctx1, stream.getLastErrorContext())
@@ -1229,26 +1356,32 @@ func TestStreamConfig_NeedsOutputResampling(t *testing.T) {
 		name             string
 		sampleRate       int
 		sourceSampleRate int
+		estimated        bool
 		want             bool
 	}{
-		{"unknown_source_resamples", 48000, 0, true},
-		{"8kHz_to_48kHz_resamples", 48000, 8000, true},
-		{"16kHz_to_48kHz_resamples", 48000, 16000, true},
-		{"44100Hz_to_48kHz_resamples", 48000, 44100, true},
-		{"48kHz_to_48kHz_passthrough", 48000, 48000, false},
-		{"96kHz_source_downsampled_for_bird", 48000, 96000, true},
-		{"96kHz_bat_passthrough", 96000, 96000, false},
-		{"192kHz_bat_passthrough", 192000, 192000, false},
-		{"256kHz_bat_passthrough", 256000, 256000, false},
-		{"384kHz_bat_passthrough", 384000, 384000, false},
+		{"unknown_source_resamples", 48000, 0, false, true},
+		{"8kHz_to_48kHz_resamples", 48000, 8000, false, true},
+		{"16kHz_to_48kHz_resamples", 48000, 16000, false, true},
+		{"44100Hz_to_48kHz_resamples", 48000, 44100, false, true},
+		{"48kHz_to_48kHz_passthrough", 48000, 48000, false, false},
+		{"96kHz_source_downsampled_for_bird", 48000, 96000, false, true},
+		{"96kHz_bat_passthrough", 96000, 96000, false, false},
+		{"192kHz_bat_passthrough", 192000, 192000, false, false},
+		{"256kHz_bat_passthrough", 256000, 256000, false, false},
+		{"384kHz_bat_passthrough", 384000, 384000, false, false},
+		// A fallback estimate forces resampling even when source == target, because
+		// the live rate may have drifted from the estimate (#4350).
+		{"estimated_matching_rate_forces_resample", 250000, 250000, true, true},
+		{"estimated_bird_rate_forces_resample", 48000, 48000, true, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := StreamConfig{
-				SampleRate:       tt.sampleRate,
-				SourceSampleRate: tt.sourceSampleRate,
+				SampleRate:                tt.sampleRate,
+				SourceSampleRate:          tt.sourceSampleRate,
+				SourceSampleRateEstimated: tt.estimated,
 			}
 			assert.Equal(t, tt.want, cfg.needsOutputResampling())
 		})
@@ -1406,7 +1539,10 @@ func TestProcessAudio_ResponsiveToRestart(t *testing.T) {
 func TestProcessAudio_DataFlowsThroughReaderGoroutine(t *testing.T) {
 	t.Parallel()
 
-	testData := []byte("audio-payload-12345")
+	// An even byte count: readStdout emits whole PCM frames only and holds a
+	// trailing partial frame back for the next read, so an odd payload would
+	// arrive one byte short here. See TestReadStdout_EmitsWholeFrames.
+	testData := []byte("audio-payload-123456")
 	var received []byte
 
 	cfg := newTestConfig()
@@ -1757,7 +1893,10 @@ func TestStream_ReadStdout_AttachesRefWhenPooled(t *testing.T) {
 	cfg := newTestConfig()
 	stream := NewStream(&cfg, nil, nil, nil, bufMgr)
 
-	reader := io.NopCloser(bytes.NewReader([]byte{1, 2, 3}))
+	// A whole number of PCM frames: readStdout holds a trailing partial frame
+	// back for the next read, so an odd payload would arrive short here for
+	// reasons unrelated to what this test is about. See TestReadStdout_EmitsWholeFrames.
+	reader := io.NopCloser(bytes.NewReader([]byte{1, 2, 3, 4}))
 	readCh := make(chan readResult, 1)
 	readerDone := make(chan struct{})
 	t.Cleanup(func() { close(readerDone) })
@@ -1768,7 +1907,7 @@ func TestStream_ReadStdout_AttachesRefWhenPooled(t *testing.T) {
 	case result := <-readCh:
 		require.NoError(t, result.err)
 		require.NotNil(t, result.ref, "pooled readStdout must attach a FrameRef to every readResult")
-		assert.Equal(t, []byte{1, 2, 3}, result.data)
+		assert.Equal(t, []byte{1, 2, 3, 4}, result.data)
 		result.ref.Release()
 	case <-time.After(time.Second):
 		t.Fatal("readStdout did not produce a readResult within 1s")
@@ -1784,7 +1923,8 @@ func TestStream_ReadStdout_NilRefWhenNoBufMgr(t *testing.T) {
 	cfg := newTestConfig()
 	stream := NewStream(&cfg, nil, nil, nil, nil)
 
-	reader := io.NopCloser(bytes.NewReader([]byte{1, 2, 3}))
+	// Whole PCM frames, for the same reason as the pooled test above.
+	reader := io.NopCloser(bytes.NewReader([]byte{1, 2, 3, 4}))
 	readCh := make(chan readResult, 1)
 	readerDone := make(chan struct{})
 	t.Cleanup(func() { close(readerDone) })
@@ -1795,8 +1935,72 @@ func TestStream_ReadStdout_NilRefWhenNoBufMgr(t *testing.T) {
 	case result := <-readCh:
 		require.NoError(t, result.err)
 		assert.Nil(t, result.ref, "non-pooled readStdout must dispatch nil ref")
-		assert.Equal(t, []byte{1, 2, 3}, result.data)
+		assert.Equal(t, []byte{1, 2, 3, 4}, result.data)
 	case <-time.After(time.Second):
 		t.Fatal("readStdout did not produce a readResult within 1s")
+	}
+}
+
+func TestStream_HandleReadError(t *testing.T) {
+	t.Parallel()
+
+	// Start one second past the quick-exit window so handleReadError takes the
+	// EOF branch rather than handleQuickExitError. Derive it from the constant
+	// so the test keeps exercising the intended path if processQuickExitTime
+	// ever changes.
+	startTime := time.Now().Add(-(processQuickExitTime + time.Second))
+
+	tests := []struct {
+		name         string
+		totalBytes   int64
+		cancelCtx    bool
+		wantErr      bool
+		wantContains string
+	}{
+		{
+			name:         "EOF with no data and live context returns error",
+			totalBytes:   0,
+			cancelCtx:    false,
+			wantErr:      true,
+			wantContains: "stream ended without producing data",
+		},
+		{
+			name:       "EOF after data returns nil",
+			totalBytes: 100,
+			cancelCtx:  false,
+			wantErr:    false,
+		},
+		{
+			name:       "EOF with no data but canceled context returns nil",
+			totalBytes: 0,
+			cancelCtx:  true,
+			wantErr:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := newTestConfig()
+			stream := NewStream(&cfg, nil, nil, nil, nil)
+			ctx, cancel := context.WithCancelCause(t.Context())
+			stream.ctx = ctx
+			stream.cancel = cancel
+			t.Cleanup(func() { cancel(nil) })
+
+			stream.totalBytesReceived = tt.totalBytes
+			if tt.cancelCtx {
+				cancel(nil)
+			}
+
+			err := stream.handleReadError(io.EOF, startTime)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantContains)
+			} else {
+				require.NoError(t, err)
+			}
+		})
 	}
 }

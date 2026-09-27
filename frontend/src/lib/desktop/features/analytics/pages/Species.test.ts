@@ -4,6 +4,8 @@ import { createComponentTestFactory } from '../../../../../test/render-helpers';
 import { setBasePath, resetBasePath } from '$lib/utils/urlHelpers';
 import Species from './Species.svelte';
 
+/* eslint-disable security/detect-object-injection -- bracket access in this file is constant numeric indexing into NodeLists (querySelectorAll(...)[CONSTANT]) in assertions, not user-controlled keys. */
+
 /** Must match SORT_STORAGE_KEY in Species.svelte. */
 const SORT_STORAGE_KEY = 'analytics.species.sortOrder';
 
@@ -70,7 +72,6 @@ describe('Species (analytics page)', () => {
 
     globalThis.fetch = mockFetchSequence({
       '/api/v2/analytics/species/summary': () => summary,
-      '/api/v2/analytics/species/thumbnails': () => ({}),
     });
 
     const { container } = speciesTest.render({});
@@ -87,46 +88,6 @@ describe('Species (analytics page)', () => {
     );
 
     expect(img.getAttribute('src')).toBe('/birdnet/api/v2/media/image/Cardellina%20pusilla');
-  });
-
-  it('also prefixes URLs returned by the batched thumbnails endpoint', async () => {
-    setBasePath('/birdnet');
-
-    const summary: SpeciesSummary[] = [
-      {
-        common_name: 'Northern Cardinal',
-        scientific_name: 'Cardinalis cardinalis',
-        count: 7,
-        avg_confidence: 0.91,
-        max_confidence: 0.99,
-        first_heard: '2026-04-10',
-        last_heard: '2026-04-26',
-        // No thumbnail_url here — the page's loadThumbnailsAsync() should
-        // populate it from the batch endpoint.
-      },
-    ];
-
-    globalThis.fetch = mockFetchSequence({
-      '/api/v2/analytics/species/summary': () => summary,
-      '/api/v2/analytics/species/thumbnails': () => ({
-        'Cardinalis cardinalis': '/api/v2/media/image/Cardinalis%20cardinalis',
-      }),
-    });
-
-    const { container } = speciesTest.render({});
-
-    const img = await waitFor(
-      () => {
-        const found = container.querySelector('img');
-        if (!found?.getAttribute('src')?.includes('Cardinalis')) {
-          throw new Error('thumbnail not yet rendered');
-        }
-        return found;
-      },
-      { timeout: 2000 }
-    );
-
-    expect(img.getAttribute('src')).toBe('/birdnet/api/v2/media/image/Cardinalis%20cardinalis');
   });
 });
 
@@ -176,7 +137,6 @@ describe('Species (analytics page) — sortable column headers', () => {
     vi.clearAllMocks();
     globalThis.fetch = mockFetchSequence({
       '/api/v2/analytics/species/summary': () => summary,
-      '/api/v2/analytics/species/thumbnails': () => ({}),
     });
     window.localStorage.clear();
   });

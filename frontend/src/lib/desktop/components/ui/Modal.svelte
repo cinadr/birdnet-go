@@ -13,17 +13,7 @@
     'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
   type ModalSize =
-    | 'sm'
-    | 'md'
-    | 'lg'
-    | 'xl'
-    | '2xl'
-    | '3xl'
-    | '4xl'
-    | '5xl'
-    | '6xl'
-    | '7xl'
-    | 'full';
+    'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | '5xl' | '6xl' | '7xl' | 'full';
   type ModalType = 'default' | 'confirm' | 'alert';
 
   interface Props extends Omit<HTMLAttributes<HTMLDivElement>, 'title'> {
@@ -219,7 +209,10 @@
 <div
   class={cn(
     'fixed inset-0 z-[2000] flex items-center justify-center p-4 bg-black/50 opacity-0 invisible transition-[opacity,visibility] duration-200 ease-out',
-    { 'opacity-100 visible': isOpen }
+    {
+      'opacity-100 visible pointer-events-auto': isOpen,
+      'pointer-events-none': !isOpen,
+    }
   )}
   role="dialog"
   aria-modal="true"

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -412,6 +413,7 @@ func TestConvertAdvancedFilters(t *testing.T) {
 			{"confidence_asc", SortFieldConfidence, false},
 			{"confidence_desc", SortFieldConfidence, true},
 			{"status", SortFieldStatus, false},
+			{datastore.SortBySearchDefault, SortFieldDetectedAt, true},
 			{"", SortFieldDetectedAt, true},
 		}
 
@@ -425,6 +427,30 @@ func TestConvertAdvancedFilters(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("text and explicit scientific alternatives share the OR branch", func(t *testing.T) {
+		deps := &FilterLookupDeps{
+			LabelRepo: &mockLabelRepository{
+				labels: map[string]*entities.Label{
+					"Tyto alba":    {ID: 11},
+					"Tyto furcata": {ID: 22},
+				},
+			},
+			SciToCommon: map[string]string{
+				"Tyto alba":    "Barn Owl",
+				"Tyto furcata": "Schleiereule",
+			},
+		}
+		filters := &datastore.AdvancedSearchFilters{
+			TextQuery:         "barn owl",
+			SpeciesScientific: []string{"Tyto alba", "Tyto furcata"},
+		}
+
+		result, err := ConvertAdvancedFilters(ctx, filters, deps, tz)
+		require.NoError(t, err)
+		assert.Equal(t, "barn owl", result.Query)
+		assert.ElementsMatch(t, []uint{11, 22}, result.CommonLabelIDs)
+	})
 }
 
 // =============================================================================
@@ -433,7 +459,9 @@ func TestConvertAdvancedFilters(t *testing.T) {
 
 // mockLabelRepository is a simple mock for testing ResolveSpeciesToLabelIDs
 type mockLabelRepository struct {
-	labels map[string]*entities.Label
+	labels      map[string]*entities.Label
+	batchCalls  atomic.Int64
+	singleCalls atomic.Int64
 }
 
 // GetOrCreate implements LabelRepository.
@@ -503,6 +531,7 @@ func (m *mockLabelRepository) GetByScientificName(_ context.Context, name string
 
 // GetLabelIDsByScientificName implements LabelRepository (cross-model ID lookup).
 func (m *mockLabelRepository) GetLabelIDsByScientificName(_ context.Context, name string) ([]uint, error) {
+	m.singleCalls.Add(1)
 	if label, ok := m.labels[name]; ok {
 		return []uint{label.ID}, nil
 	}
@@ -511,6 +540,7 @@ func (m *mockLabelRepository) GetLabelIDsByScientificName(_ context.Context, nam
 
 // GetByScientificNames implements LabelRepository (batch cross-model lookup).
 func (m *mockLabelRepository) GetByScientificNames(_ context.Context, names []string) (map[string][]*entities.Label, error) {
+	m.batchCalls.Add(1)
 	result := make(map[string][]*entities.Label, len(names))
 	for _, name := range names {
 		if label, ok := m.labels[name]; ok {
@@ -518,6 +548,11 @@ func (m *mockLabelRepository) GetByScientificNames(_ context.Context, names []st
 		}
 	}
 	return result, nil
+}
+
+// UpdateLabelType implements LabelRepository (no-op for testing).
+func (m *mockLabelRepository) UpdateLabelType(_ context.Context, _, _ uint) error {
+	return nil
 }
 
 // mockAudioSourceRepository is a simple mock for testing ResolveLocationsToSourceIDs
@@ -597,6 +632,8 @@ func TestResolveSpeciesToLabelIDs(t *testing.T) {
 		result, err := ResolveSpeciesToLabelIDs(ctx, deps, []string{"Turdus merula", "Parus major"})
 		require.NoError(t, err)
 		assert.ElementsMatch(t, []uint{1, 2}, result)
+		assert.Equal(t, int64(1), labelRepo.batchCalls.Load(), "all scientific names should resolve in one batch")
+		assert.Zero(t, labelRepo.singleCalls.Load())
 	})
 
 	t.Run("unknown species returns sentinel", func(t *testing.T) {
@@ -621,6 +658,66 @@ func TestResolveSpeciesToLabelIDs(t *testing.T) {
 		require.NoError(t, err)
 		// Should return only the found one
 		assert.Equal(t, []uint{1}, result)
+	})
+}
+
+// TestConvertSearchFilters_SpeciesScientific verifies that explicit scientific
+// names supplied by the client (resolved in the browser from the per-visitor
+// dictionary) are resolved to label IDs and OR-ed into the same label-ID branch
+// as common-name matches, so an ambiguous localized name can match multiple
+// species without a server-locale round trip.
+func TestConvertSearchFilters_SpeciesScientific(t *testing.T) {
+	t.Parallel()
+
+	deps := &FilterLookupDeps{
+		LabelRepo: &mockLabelRepository{
+			labels: map[string]*entities.Label{
+				"Barbastella barbastellus": {ID: 11},
+				"Myotis daubentonii":       {ID: 22},
+			},
+		},
+	}
+
+	t.Run("multiple scientific names resolve into the label-ID branch", func(t *testing.T) {
+		t.Parallel()
+		sf, err := ConvertSearchFilters(t.Context(), &datastore.SearchFilters{
+			SpeciesScientific: []string{"Barbastella barbastellus", "Myotis daubentonii"},
+		}, deps, time.UTC)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []uint{11, 22}, sf.CommonLabelIDs)
+		assert.Empty(t, sf.Query, "explicit scientific names are resolved to label IDs, not a LIKE query")
+	})
+
+	t.Run("unknown scientific names yield the no-match sentinel", func(t *testing.T) {
+		t.Parallel()
+		sf, err := ConvertSearchFilters(t.Context(), &datastore.SearchFilters{
+			SpeciesScientific: []string{"Nonexistent species"},
+		}, deps, time.UTC)
+		require.NoError(t, err)
+		assert.Equal(t, sentinelNoMatchIDs, sf.CommonLabelIDs)
+	})
+
+	t.Run("empty scientific list leaves the free-text species filter intact", func(t *testing.T) {
+		t.Parallel()
+		sf, err := ConvertSearchFilters(t.Context(), &datastore.SearchFilters{
+			Species: "Barbastella",
+		}, deps, time.UTC)
+		require.NoError(t, err)
+		assert.Equal(t, "Barbastella", sf.Query)
+	})
+
+	t.Run("free-text and scientific names coexist (scientific OR-ed, not replaced)", func(t *testing.T) {
+		t.Parallel()
+		sf, err := ConvertSearchFilters(t.Context(), &datastore.SearchFilters{
+			Species:           "Strix",
+			SpeciesScientific: []string{"Myotis daubentonii"},
+		}, deps, time.UTC)
+		require.NoError(t, err)
+		// The free-text term stays as the scientific_name LIKE branch...
+		assert.Equal(t, "Strix", sf.Query)
+		// ...and the resolved scientific name is appended to the label-ID branch
+		// (buildSearchJoins OR-s Query with CommonLabelIDs), not dropped.
+		assert.Contains(t, sf.CommonLabelIDs, uint(22))
 	})
 }
 
@@ -1256,8 +1353,45 @@ func TestResolveDeviceToSourceIDs(t *testing.T) {
 
 		result, err := ResolveDeviceToSourceIDs(ctx, deps, "node1")
 		require.NoError(t, err)
-		// Should match "node1" and "mynode1" (contains "node1")
-		assert.ElementsMatch(t, []uint{1, 3}, result)
+		// Exact match on "node1" wins; "mynode1" (substring match) is not
+		// included so that picking a specific source never selects siblings
+		// whose name merely contains the query.
+		assert.ElementsMatch(t, []uint{1}, result)
+	})
+
+	t.Run("substring fallback when no exact match", func(t *testing.T) {
+		deps := &FilterLookupDeps{
+			SourceRepo: &mockAudioSourceRepositoryWithGetAll{
+				allSources: []*entities.AudioSource{
+					{ID: 1, NodeName: "node1"},
+					{ID: 2, NodeName: "node2"},
+					{ID: 3, NodeName: "mynode1"},
+				},
+			},
+		}
+
+		result, err := ResolveDeviceToSourceIDs(ctx, deps, "node")
+		require.NoError(t, err)
+		// No source is named exactly "node", so all substring matches apply
+		assert.ElementsMatch(t, []uint{1, 2, 3}, result)
+	})
+
+	t.Run("exact match on display name preferred", func(t *testing.T) {
+		camera1 := "Camera 1"
+		camera10 := "Camera 10"
+		deps := &FilterLookupDeps{
+			SourceRepo: &mockAudioSourceRepositoryWithGetAll{
+				allSources: []*entities.AudioSource{
+					{ID: 1, NodeName: "node1", DisplayName: &camera1},
+					{ID: 2, NodeName: "node1", DisplayName: &camera10},
+				},
+			},
+		}
+
+		result, err := ResolveDeviceToSourceIDs(ctx, deps, "camera 1")
+		require.NoError(t, err)
+		// "Camera 1" matches exactly; "Camera 10" only as substring
+		assert.ElementsMatch(t, []uint{1}, result)
 	})
 
 	t.Run("case insensitive matching", func(t *testing.T) {
@@ -1288,4 +1422,82 @@ func TestResolveDeviceToSourceIDs(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []uint{0}, result)
 	})
+}
+
+// mockAllSourceRepository serves GetAll from a fixed list, for the source filter resolver.
+type mockAllSourceRepository struct {
+	mockAudioSourceRepository
+	all []*entities.AudioSource
+}
+
+func (m *mockAllSourceRepository) GetAll(_ context.Context) ([]*entities.AudioSource, error) {
+	return m.all, nil
+}
+
+// TestResolveSourcesToSourceIDs pins the public source filter: a value matches a source by its
+// numeric ID, display name or node name (names case-insensitively); nothing matching yields the
+// no-match sentinel rather than no filter.
+func TestResolveSourcesToSourceIDs(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	deps := &FilterLookupDeps{SourceRepo: &mockAllSourceRepository{all: []*entities.AudioSource{
+		{ID: 1, NodeName: "station", DisplayName: new("back")},
+		{ID: 2, NodeName: "station", DisplayName: new("north")},
+		{ID: 3, NodeName: "garage-pi", DisplayName: nil},
+	}}}
+
+	tests := []struct {
+		name    string
+		sources []string
+		want    []uint
+	}{
+		{name: "empty is no filter", sources: nil, want: nil},
+		{name: "numeric id", sources: []string{"2"}, want: []uint{2}},
+		{name: "display name, any case", sources: []string{"NORTH"}, want: []uint{2}},
+		{name: "node name matches every source on the node", sources: []string{"station"}, want: []uint{1, 2}},
+		{name: "node name without display name", sources: []string{"garage-pi"}, want: []uint{3}},
+		{name: "several values union", sources: []string{"back", "3"}, want: []uint{1, 3}},
+		{name: "unknown yields no match", sources: []string{"doorbell"}, want: sentinelNoMatchIDs},
+		{name: "zero is not an id", sources: []string{"0"}, want: sentinelNoMatchIDs},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ResolveSourcesToSourceIDs(ctx, deps, tt.sources)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	t.Run("nil deps: names match nothing, ids still apply", func(t *testing.T) {
+		t.Parallel()
+		got, err := ResolveSourcesToSourceIDs(ctx, nil, []string{"north"})
+		require.NoError(t, err)
+		assert.Equal(t, sentinelNoMatchIDs, got, "a name cannot be resolved without a repository, so it must not drop the filter")
+		got, err = ResolveSourcesToSourceIDs(ctx, nil, []string{"north", "2"})
+		require.NoError(t, err)
+		assert.Equal(t, []uint{2}, got)
+	})
+}
+
+// TestIntersectSourceIDs pins how the location (node) and source filters combine.
+func TestIntersectSourceIDs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		a, b []uint
+		want []uint
+	}{
+		{name: "both unset", a: nil, b: nil, want: nil},
+		{name: "only source set", a: nil, b: []uint{2}, want: []uint{2}},
+		{name: "only location set", a: []uint{1, 2}, b: nil, want: []uint{1, 2}},
+		{name: "overlap", a: []uint{1, 2}, b: []uint{2, 3}, want: []uint{2}},
+		{name: "disjoint is no match", a: []uint{1}, b: []uint{2}, want: sentinelNoMatchIDs},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, intersectSourceIDs(tt.a, tt.b))
+		})
+	}
 }

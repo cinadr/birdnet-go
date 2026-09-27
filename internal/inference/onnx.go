@@ -113,6 +113,25 @@ func (c *onnxClassifier) Close() {
 	}
 }
 
+// DetectEmbeddingOutput returns the output-port index and size of a model's BirdNET
+// v2.4 embedding output ([.,1024]): index 1 for the 2-output backbone (logits@0 +
+// embedding@1), index 0 for the head-pruned, embedding-only model. The bat OpenVINO
+// path uses it to bind the embedding extractor to the correct port before inference.
+// Returns an error when the model has no 1024-dim output. The ONNX Runtime must be
+// initialized via InitONNXRuntime before calling.
+func DetectEmbeddingOutput(modelPath string) (index, size int, err error) {
+	return ort.DetectEmbeddingOutput(modelPath)
+}
+
+// DetectPredictionsOutput returns the output-port index of a model's
+// species-predictions output: the output whose last dimension equals numClasses.
+// BirdNET v3.0 also exposes a 1280-dim embeddings output whose position varies by
+// export, so the OpenVINO path uses this to bind the classifier to the correct
+// port before inference. Returns an error when no output matches numClasses.
+func DetectPredictionsOutput(modelPath string, numClasses int) (index int, err error) {
+	return ort.DetectPredictionsOutput(modelPath, numClasses)
+}
+
 // ONNXCustomClassifierOptions configures the ONNX custom classifier.
 type ONNXCustomClassifierOptions struct {
 	Labels     []string // Provide labels directly (takes priority over LabelsPath)
@@ -182,6 +201,14 @@ func (c *onnxCustomClassifier) NumClasses() int {
 		return 0
 	}
 	return c.classifier.NumClasses()
+}
+
+// InputDim returns the embedding vector length the classifier expects as input.
+func (c *onnxCustomClassifier) InputDim() int {
+	if c.classifier == nil {
+		return 0
+	}
+	return c.classifier.InputDim()
 }
 
 // Labels returns the classification labels.
@@ -333,10 +360,19 @@ func findONNXRuntimeLibrary() string {
 }
 
 // DestroyONNXRuntime tears down the ONNX Runtime environment.
-// Resets initialization state so InitONNXRuntime can be called again.
+// Resets initialization state so InitONNXRuntime can be called again. It is a
+// no-op (returns nil) when the runtime was never initialized, mirroring
+// DestroyOpenVINO, so a shutdown teardown can call it unconditionally without
+// ort.DestroyORT reporting "InitializeRuntime has not been called".
 func DestroyONNXRuntime() error {
 	ortInitMu.Lock()
 	defer ortInitMu.Unlock()
+	if !ortInitialized {
+		return nil
+	}
+	if err := ort.DestroyORT(); err != nil {
+		return err
+	}
 	ortInitialized = false
-	return ort.DestroyORT()
+	return nil
 }

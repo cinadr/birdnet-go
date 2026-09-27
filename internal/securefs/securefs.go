@@ -1,7 +1,6 @@
 package securefs
 
 import (
-	stdErrors "errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -602,7 +601,7 @@ func (sfs *SecureFS) serveInternal(c echo.Context, opener func() (*os.File, stri
 	if err != nil {
 		// File-not-found is expected during the race window between detection
 		// DB commit and audio export completion — log at debug, not error.
-		if stdErrors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) {
 			GetLogger().Debug("File not found via opener",
 				logger.String("path", effectivePath))
 		} else {
@@ -672,7 +671,7 @@ func (sfs *SecureFS) ServeFile(c echo.Context, path string) error {
 			// DB commit and audio export completion. The API layer handles this
 			// gracefully (handleAudio404WithWait). Use plain error wrapping to
 			// avoid triggering telemetry hooks and creating noise notifications.
-			if stdErrors.Is(err, fs.ErrNotExist) {
+			if errors.Is(err, fs.ErrNotExist) {
 				return nil, relPath, fmt.Errorf("openat %s: %w", relPath, err)
 			}
 			// Wrap operational errors for context
@@ -702,7 +701,7 @@ func (sfs *SecureFS) ServeRelativeFile(c echo.Context, relPath string) error {
 			// DB commit and audio export completion. The API layer handles this
 			// gracefully (handleAudio404WithWait). Use plain error wrapping to
 			// avoid triggering telemetry hooks and creating noise notifications.
-			if stdErrors.Is(err, fs.ErrNotExist) {
+			if errors.Is(err, fs.ErrNotExist) {
 				return nil, validatedRelPath, fmt.Errorf("openat %s: %w", validatedRelPath, err)
 			}
 			// Wrap operational errors for context
@@ -797,6 +796,35 @@ func (sfs *SecureFS) ReadDir(path string) ([]os.DirEntry, error) {
 	entries, err := dirFile.ReadDir(0) // 0 means read all entries
 	if err != nil {
 		return nil, errors.New(err).Component(componentSecurefs).Category(errors.CategoryFileIO).Context("operation", "read_directory_entries").Build()
+	}
+
+	return entries, nil
+}
+
+// ReadDirRel reads the directory at relPath (relative to the SecureFS root) and
+// returns its entries. Unlike ReadDir, which resolves its argument against the
+// process working directory, ReadDirRel validates relPath the same way StatRel
+// does, so it correctly lists directories addressed relative to the root, which
+// is the form stored clip paths use.
+func (sfs *SecureFS) ReadDirRel(relPath string) ([]os.DirEntry, error) {
+	validatedRelPath, err := sfs.ValidateRelativePath(relPath)
+	if err != nil {
+		return nil, err
+	}
+
+	dirFile, err := sfs.root.Open(validatedRelPath)
+	if err != nil {
+		return nil, errors.New(err).Component(componentSecurefs).Category(errors.CategoryFileIO).Context("operation", "open_directory_rel").Build()
+	}
+	defer func() {
+		if closeErr := dirFile.Close(); closeErr != nil {
+			GetLogger().Warn("Failed to close directory", logger.Error(closeErr))
+		}
+	}()
+
+	entries, err := dirFile.ReadDir(0) // 0 means read all entries
+	if err != nil {
+		return nil, errors.New(err).Component(componentSecurefs).Category(errors.CategoryFileIO).Context("operation", "read_directory_entries_rel").Build()
 	}
 
 	return entries, nil

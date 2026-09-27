@@ -1,7 +1,6 @@
 package notification
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -15,12 +14,8 @@ import (
 // TestMain provides goleak verification to detect goroutine leaks
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m,
-		goleak.IgnoreTopFunction("testing.(*T).Run"),
-		goleak.IgnoreTopFunction("runtime.gopark"),
-		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 		goleak.IgnoreTopFunction("github.com/tphakala/birdnet-go/internal/notification.(*Service).cleanupLoop"),
 	)
-	os.Exit(m.Run())
 }
 
 // setupTestServiceAndConsumer creates a notification service and consumer for testing.
@@ -147,14 +142,6 @@ func TestDetectionNotificationConsumer_PreSanitizedLocations(t *testing.T) {
 		RateLimitWindow:    1 * time.Minute,
 		RateLimitMaxEvents: 100,
 	}
-	service := NewService(config)
-	require.NotNil(t, service)
-	defer service.Stop()
-
-	// Create detection consumer
-	consumer := NewDetectionNotificationConsumer(service)
-	require.NotNil(t, consumer)
-
 	// Test cases for pre-sanitized locations from audio source registry
 	// In the new architecture, detection events already contain sanitized display names
 	testCases := []struct {
@@ -191,6 +178,19 @@ func TestDetectionNotificationConsumer_PreSanitizedLocations(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Use a fresh service per case so the List below returns only this
+			// case's notification. The cases otherwise share one service and
+			// List(Limit:1) would rely on timestamp ordering to pick "the latest";
+			// on a coarse clock (Windows ~15ms) several cases get the same
+			// timestamp and the unstable sort returns an arbitrary one, picking a
+			// prior case's notification.
+			service := NewService(config)
+			require.NotNil(t, service)
+			t.Cleanup(service.Stop)
+
+			consumer := NewDetectionNotificationConsumer(service)
+			require.NotNil(t, consumer)
+
 			// Create a new species detection event with pre-sanitized location
 			// This simulates how the real system works: detection events contain
 			// already-sanitized display names from the audio source registry

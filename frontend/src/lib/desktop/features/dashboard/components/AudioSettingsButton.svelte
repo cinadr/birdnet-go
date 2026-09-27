@@ -12,10 +12,14 @@
   - onFilterChange: (value: number) => void - Callback when filter changes
   - onSpeedChange: (value: number) => void - Callback when speed changes
   - disabled?: boolean - Whether the button is disabled (e.g., AudioContext not available)
+  - closeSignal?: number - Bump this to force-close an open popup (e.g. a sibling
+    Audible Bats popup just opened); mirrors AudibleBatsButton
 -->
 <script lang="ts">
   import { Volume2 } from '@lucide/svelte';
   import { dropdown } from '$lib/utils/transitions';
+  import { computeAnchorPosition, applyAnchorPosition } from '$lib/utils/anchorPosition';
+  import { useCloseSignal } from '$lib/utils/useCloseSignal.svelte';
   import { t } from '$lib/i18n';
   import { SPEED_OPTIONS, DEFAULT_PLAYBACK_SPEED } from '$lib/utils/audio';
 
@@ -28,6 +32,7 @@
     onSpeedChange: (_value: number) => void;
     defaultGainValue?: number;
     disabled?: boolean;
+    closeSignal?: number;
     onMenuOpen?: () => void;
     onMenuClose?: () => void;
   }
@@ -41,6 +46,7 @@
     onSpeedChange,
     defaultGainValue = 0,
     disabled = false,
+    closeSignal = 0,
     onMenuOpen,
     onMenuClose,
   }: Props = $props();
@@ -50,6 +56,8 @@
   const GAIN_MIN_DB = -20;
   const FILTER_HP_MIN_FREQ = 20;
   const FILTER_HP_MAX_FREQ = 5000;
+  // Gap in px between the trigger button and the settings menu.
+  const MENU_OFFSET = 8;
 
   // Generate unique ID for this component instance
   const instanceId = Math.random().toString(36).slice(2, 9);
@@ -73,26 +81,19 @@
   function updateMenuPosition() {
     if (!menuElement || !buttonElement) return;
 
-    const buttonRect = buttonElement.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - buttonRect.bottom;
-    const spaceAbove = buttonRect.top;
-    const menuHeight = menuElement.offsetHeight;
-
-    menuElement.style.position = 'fixed';
+    // Align the menu's right edge with the button (clamped into the viewport so a
+    // wide menu near the left edge cannot overflow off-screen), flipping above when
+    // there is not enough room below.
+    const position = computeAnchorPosition({
+      triggerRect: buttonElement.getBoundingClientRect(),
+      floatingHeight: menuElement.offsetHeight,
+      floatingWidth: menuElement.offsetWidth,
+      offset: MENU_OFFSET,
+      align: 'end',
+    });
+    applyAnchorPosition(menuElement, position);
+    // Stacking is owned by the component (kept above overlay content).
     menuElement.style.zIndex = '9999';
-
-    // Position below or above based on available space
-    if (spaceBelow < menuHeight && spaceAbove > spaceBelow) {
-      menuElement.style.bottom = `${window.innerHeight - buttonRect.top + 8}px`;
-      menuElement.style.top = 'auto';
-    } else {
-      menuElement.style.top = `${buttonRect.bottom + 8}px`;
-      menuElement.style.bottom = 'auto';
-    }
-
-    // Align to right edge of button
-    menuElement.style.left = 'auto';
-    menuElement.style.right = `${window.innerWidth - buttonRect.right}px`;
   }
 
   function handleToggle(event: MouseEvent) {
@@ -138,6 +139,18 @@
     onSpeedChange(DEFAULT_PLAYBACK_SPEED);
   }
 
+  // Force-close when the parent bumps closeSignal (e.g. the sibling Audible
+  // Bats popup was just opened) so only one popup is ever visible at once.
+  useCloseSignal(
+    () => closeSignal,
+    () => {
+      if (showSettings) {
+        showSettings = false;
+        onMenuClose?.();
+      }
+    }
+  );
+
   $effect(() => {
     if (showSettings) {
       function handleResize() {
@@ -158,11 +171,13 @@
     }
   });
 
-  // Cleanup on unmount
+  // Cleanup on unmount: if the menu is open when the component is destroyed, notify
+  // the parent so its open-menu tracking stays in sync (mirrors ActionMenu). Avoid
+  // mutating $state during teardown.
   $effect(() => {
     return () => {
       if (showSettings) {
-        showSettings = false;
+        onMenuClose?.();
       }
     };
   });
@@ -197,6 +212,8 @@
       onkeydown={e => {
         if (e.key === 'Escape') {
           showSettings = false;
+          onMenuClose?.();
+          buttonElement?.focus();
         }
         e.stopPropagation();
       }}
@@ -319,6 +336,13 @@
   .settings-menu {
     position: fixed;
     min-width: 14rem;
+
+    /* Caps the box itself so it can never exceed the viewport on narrow/short
+       screens, independent of the JS position clamp in anchorPosition.ts (which
+       only clamps the left/top offset, not the box's own dimensions). */
+    max-width: calc(100vw - 1rem);
+    max-height: calc(100vh - 1rem);
+    overflow-y: auto;
     padding: 0.75rem;
     background-color: rgb(30 41 59 / 0.95);
     border: 1px solid rgb(51 65 85);

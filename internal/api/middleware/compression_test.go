@@ -146,6 +146,112 @@ func TestDefaultGzipSkipper(t *testing.T) {
 		setPathForContext(t, c, "/api/v2/detections")
 		assert.False(t, DefaultGzipSkipper(c))
 	})
+
+	t.Run("skips precompressed route", func(t *testing.T) {
+		t.Parallel()
+		c, _ := newTestContext(t, http.MethodGet, "/api/v2/species/dictionary/fi")
+		setPathForContext(t, c, "/api/v2/species/dictionary/:locale")
+		assert.True(t, DefaultGzipSkipper(c),
+			"the species dictionary route serves precompressed bytes and must not be re-gzipped")
+	})
+
+	t.Run("skips pprof routes", func(t *testing.T) {
+		t.Parallel()
+		// Matched on the request path, not the route template, because the
+		// named profiles are served by one wildcard route.
+		for _, path := range []string{"/debug/pprof", "/debug/pprof/heap", "/debug/pprof/profile"} {
+			c, _ := newTestContext(t, http.MethodGet, path)
+			setPathForContext(t, c, "/debug/pprof/*")
+			assert.True(t, DefaultGzipSkipper(c),
+				"a pprof profile is already a gzip stream: %s", path)
+		}
+	})
+
+	t.Run("does not skip a pprof lookalike path", func(t *testing.T) {
+		t.Parallel()
+		c, _ := newTestContext(t, http.MethodGet, "/debug/pprofiler")
+		setPathForContext(t, c, "/debug/pprofiler")
+		assert.False(t, DefaultGzipSkipper(c))
+	})
+}
+
+func TestDefaultGzipSkipper_SkipsStreamingJSONRoutes(t *testing.T) {
+	t.Parallel()
+
+	// Hardcoded route templates (NOT derived from streamingJSONRoutes) so that
+	// dropping or renaming an entry in the production map fails this test instead
+	// of silently reducing coverage. These must equal the templates the
+	// integrations handler registers (RegisterRoutes under the /api/v2 group).
+	streamingRoutes := []string{
+		"/api/v2/integrations/mqtt/test",
+		"/api/v2/integrations/birdweather/test",
+		"/api/v2/integrations/weather/test",
+		"/api/v2/integrations/ebird/test",
+	}
+	for _, route := range streamingRoutes {
+		t.Run("skips "+route, func(t *testing.T) {
+			t.Parallel()
+			// Fetch-based POSTs whose Accept is not text/event-stream, so SSESkipper
+			// does not cover them; the route-template skip must, otherwise gzip
+			// buffering would withhold the flushed progress results.
+			c, _ := newTestContext(t, http.MethodPost, "/irrelevant")
+			setPathForContext(t, c, route)
+			assert.True(t, DefaultGzipSkipper(c),
+				"streaming route %q must skip gzip so flushed results reach the client immediately", route)
+		})
+	}
+
+	// Negative: a non-streaming sibling endpoint must still be compressed.
+	t.Run("does not skip non-streaming integration route", func(t *testing.T) {
+		t.Parallel()
+		c, _ := newTestContext(t, http.MethodGet, "/irrelevant")
+		setPathForContext(t, c, "/api/v2/integrations/mqtt/status")
+		assert.False(t, DefaultGzipSkipper(c),
+			"the MQTT status route returns a normal JSON body and must still be gzip-compressed")
+	})
+
+	// Guard against the production map drifting from the hardcoded set: every known
+	// route must be present, and the map must contain nothing unexpected.
+	known := make(map[string]struct{}, len(streamingRoutes))
+	for _, r := range streamingRoutes {
+		known[r] = struct{}{}
+		if _, ok := streamingJSONRoutes[r]; !ok {
+			t.Errorf("streamingJSONRoutes is missing expected streaming route %q", r)
+		}
+	}
+	for r := range streamingJSONRoutes {
+		if _, ok := known[r]; !ok {
+			t.Errorf("streamingJSONRoutes has unexpected route %q not asserted by this test", r)
+		}
+	}
+}
+
+// TestNewGzip_EndToEnd_StreamingJSONRouteNotCompressed drives the real gzip
+// middleware stack against a registered streaming route template and verifies the
+// response is not gzip-wrapped even when the client advertises Accept-Encoding:
+// gzip. This complements the skipper unit test by exercising c.Path() through the
+// actual Echo router, so a mismatch between the skip-set template and the
+// registered route would surface here.
+func TestNewGzip_EndToEnd_StreamingJSONRouteNotCompressed(t *testing.T) {
+	t.Parallel()
+
+	e := echo.New()
+	e.Use(NewGzip())
+	// Register the real streaming route template so c.Path() matches the skip set.
+	e.POST("/api/v2/integrations/mqtt/test", func(c echo.Context) error {
+		return c.String(http.StatusOK, strings.Repeat("PROGRESS_JSON_LINE", 2048))
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/integrations/mqtt/test", http.NoBody)
+	req.Header.Set(echo.HeaderAcceptEncoding, "gzip")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Empty(t, rec.Header().Get(echo.HeaderContentEncoding),
+		"streaming test route must not be gzip-compressed even when the client asks for it")
+	assert.False(t, bytes.HasPrefix(rec.Body.Bytes(), []byte{0x1f, 0x8b}),
+		"streaming test route body must not be a gzip stream")
 }
 
 // TestNewGzip_EndToEnd_AudioRouteNotCompressed is a regression test for
@@ -272,4 +378,46 @@ func TestNewGzip_EndToEnd_SSEStillNotCompressed(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Empty(t, rec.Header().Get(echo.HeaderContentEncoding),
 		"SSE endpoint must not be gzip-compressed")
+}
+
+// TestNewGzip_EndToEnd_PrecompressedRouteNotDoubleCompressed guards the species
+// dictionary endpoint: it serves bytes the handler already gzip-compressed and sets
+// Content-Encoding: gzip itself. Echo's gzip middleware does not check for an existing
+// Content-Encoding, so without the precompressedRoutes skip it would compress the body
+// a second time, and a browser decompressing once would get gzip bytes instead of JSON.
+// This drives the production gzip stack and asserts the body decompresses in ONE pass.
+func TestNewGzip_EndToEnd_PrecompressedRouteNotDoubleCompressed(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte(`{"Barbastella barbastellus":"mopsilepakko"}`)
+	var gzBuf bytes.Buffer
+	zw := gzip.NewWriter(&gzBuf)
+	_, err := zw.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	precompressed := gzBuf.Bytes()
+
+	e := echo.New()
+	e.Use(NewGzip())
+	e.GET("/api/v2/species/dictionary/:locale", func(c echo.Context) error {
+		c.Response().Header().Set(echo.HeaderContentEncoding, "gzip")
+		return c.Blob(http.StatusOK, "application/json", precompressed)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/species/dictionary/fi", http.NoBody)
+	req.Header.Set(echo.HeaderAcceptEncoding, "gzip")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "gzip", rec.Header().Get(echo.HeaderContentEncoding))
+
+	// A single gzip pass: decompressing the body once must yield the JSON payload.
+	// If the middleware had re-compressed it, one pass would yield gzip bytes instead.
+	zr, err := gzip.NewReader(bytes.NewReader(rec.Body.Bytes()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = zr.Close() })
+	got, err := io.ReadAll(zr)
+	require.NoError(t, err)
+	assert.Equal(t, payload, got, "dictionary body must decompress in a single gzip pass")
 }

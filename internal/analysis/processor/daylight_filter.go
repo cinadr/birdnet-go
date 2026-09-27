@@ -9,6 +9,12 @@ import (
 	"github.com/tphakala/birdnet-go/internal/suncalc"
 )
 
+// reasonDaylightFilter is the discard reason returned by shouldDiscardDetection
+// when a detection is dropped by the daylight filter. Shared with the flush path
+// so it can single out daylight discards for aggregate reporting instead of
+// matching a bare string literal.
+const reasonDaylightFilter = "daylight filter"
+
 // SetSunCalc injects the sun calculator into the processor and initializes
 // the daylight filter species list. This is called after processor creation
 // when the suncalc instance becomes available.
@@ -41,17 +47,23 @@ func (p *Processor) initDaylightFilter() {
 		return
 	}
 
-	// Get BirdNET labels from fresh settings for common name resolution
+	// Resolve config entries against the full multi-model label union (primary plus
+	// secondary models such as bats/Perch) so secondary-model species match. Fall
+	// back to the primary labels if the orchestrator is unavailable.
 	var labels []string
-	if settings != nil {
+	if p.Bn != nil {
+		labels = p.Bn.AllLabels()
+	}
+	if len(labels) == 0 {
 		labels = settings.BirdNET.Labels
 	}
+	locale := settings.BirdNET.Locale
 
 	// Get cached taxonomy database for genus/family/order resolution
 	taxonomyDB := p.getTaxonomyDB()
 
 	isAll, resolved := resolveSpeciesFilter(
-		settings.Realtime.DaylightFilter.Species, labels, taxonomyDB, "daylight_filter",
+		settings.Realtime.DaylightFilter.Species, labels, taxonomyDB, locale, "daylight_filter",
 	)
 
 	// For an exclusionary filter, empty species list means "filter nothing",

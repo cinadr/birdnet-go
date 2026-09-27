@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tphakala/birdnet-go/internal/conf"
 	"github.com/tphakala/birdnet-go/internal/detection"
 )
 
@@ -48,6 +49,41 @@ func TestModelRegistry_BackendAndDisplayName(t *testing.T) {
 	}
 }
 
+func TestDetectQuantization(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   string
+		want Quantization
+	}{
+		{"int8 underscore", "BirdNET_INT8_ARM.onnx", QuantizationINT8},
+		{"int8 hyphen", "model-int8.onnx", QuantizationINT8},
+		{"fp16", "BirdNET_GLOBAL_6K_V2.4_MData_Model_FP16.tflite", QuantizationFP16},
+		{"fp32", "BirdNET_GLOBAL_6K_V2.4_Model_FP32.tflite", QuantizationFP32},
+		{"no marker", "BirdNET_MData_V2.onnx", QuantizationUnknown},
+		{"false positive sprint8", "sprint8_model.onnx", QuantizationUnknown},
+		{"false positive point8", "perch_point8.onnx", QuantizationUnknown},
+		{"int8 at start", "int8_model.onnx", QuantizationINT8},
+		{"dot delimiter", "model.int8.onnx", QuantizationINT8},
+		{"ambiguous multi-token", "model_int8_fp16.onnx", QuantizationUnknown},
+		{"uppercase + uppercase ext", "model_FP16.TFLITE", QuantizationFP16},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, detectQuantization(tt.in))
+		})
+	}
+}
+
+func TestBirdNETV24EntryQuantization(t *testing.T) {
+	t.Parallel()
+	info := ModelRegistry[DefaultModelVersion]
+	assert.Equal(t, BackendTFLite, info.Backend)
+	assert.Equal(t, QuantizationFP32, info.Quantization)
+	assert.False(t, info.IsStock, "registry templates are not marked IsStock")
+}
+
 func TestDisplayName_NoBackend(t *testing.T) {
 	t.Parallel()
 
@@ -61,7 +97,7 @@ func TestModelRegistry_BirdNETSpec(t *testing.T) {
 	info := ModelRegistry["BirdNET_V2.4"]
 	assert.Equal(t, 48000, info.Spec.SampleRate)
 	assert.Equal(t, 3*time.Second, info.Spec.ClipLength)
-	assert.Equal(t, 6523, info.NumSpecies)
+	assert.Equal(t, 6522, info.NumSpecies)
 	assert.Contains(t, info.ConfigAliases, "birdnet")
 }
 
@@ -149,6 +185,46 @@ func TestDetermineModelInfo_UnrecognizedNonModelFile(t *testing.T) {
 	_, err := DetermineModelInfo("not-a-model-file.txt")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unrecognized model")
+}
+
+// TestCustomBirdNETV24ModelInfo verifies that any model configured in the
+// birdnet config section keeps the canonical BirdNET_V2.4 identity regardless
+// of filename. Identity divergence (e.g. a "Custom" ID for an unrecognized
+// filename) breaks the per-source model-set join in resolveDesiredModelSet,
+// which keys the loaded model by ID against the "birdnet" config alias -> the
+// primary classifier never gets a buffer monitor and inference never starts.
+// BirdNET v3.0 is selected via birdnet.version, never by a filename here.
+func TestCustomBirdNETV24ModelInfo(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		path      string
+		wantBack  string
+		wantQuant Quantization
+	}{
+		{"fp16 keepact onnx", "/home/thakala/BirdNET_v24_fp16_keepact.onnx", BackendONNX, QuantizationFP16},
+		{"int8 arm onnx", "/models/BirdNET_INT8_ARM.onnx", BackendONNX, QuantizationINT8},
+		{"plain onnx no precision token", "/models/my-classifier.onnx", BackendONNX, QuantizationFP32},
+		{"custom tflite build", "/models/BirdNET-Go_classifier.tflite", BackendTFLite, QuantizationFP32},
+		{"unrecognized onnx name", "/models/totally-unknown.onnx", BackendONNX, QuantizationFP32},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			info := customBirdNETV24ModelInfo(tt.path)
+
+			assert.Equal(t, DefaultModelVersion, info.ID, "birdnet-slot model must keep BirdNET_V2.4 identity")
+			assert.Equal(t, "BirdNET", info.DetectionName)
+			assert.Equal(t, "2.4", info.DetectionVersion)
+			assert.Equal(t, tt.path, info.CustomPath)
+			assert.False(t, info.IsStock, "user-supplied model must not be marked stock")
+			assert.Equal(t, tt.wantBack, info.Backend)
+			assert.Equal(t, tt.wantQuant, info.Quantization)
+			assert.NotEmpty(t, info.SupportedLocales, "must inherit BirdNET v2.4 locales")
+		})
+	}
 }
 
 func TestIsLocaleSupported_PerchHasNoLocales(t *testing.T) {
@@ -258,6 +334,48 @@ func TestKnownConfigIDs_AllModels(t *testing.T) {
 	assert.True(t, ids["bat"], "bat config ID should be known")
 	assert.True(t, ids["bsg"], "bsg config ID should be known")
 	assert.False(t, ids["unknown"], "unknown config ID should not be known")
+
+	// Hyphenated catalog-style IDs are accepted as secondary aliases so a config
+	// carrying the catalog entry ID does not trip an "unknown model ID" warning.
+	assert.True(t, ids["perch-v2"], "perch-v2 catalog-style ID should be known")
+	assert.True(t, ids["birdnet-v3.0"], "birdnet-v3.0 catalog-style ID should be known")
+	assert.True(t, ids["birdnet-v2.4"], "birdnet-v2.4 catalog-style ID should be known")
+	assert.True(t, ids["bsg-finland"], "bsg-finland catalog-style ID should be known")
+}
+
+// TestKnownConfigIDs_MatchesConfValidAudioModels is a drift guard. conf.ValidAudioModels
+// (and the applyModelValidation fallback set it mirrors) is hand-maintained because the
+// conf package cannot import classifier. If a future registry alias is added without
+// updating the conf-side maps, "perch-v2"-style IDs would validate in one path and be
+// rejected in another. This test fails when the two sets diverge, forcing both to move
+// together. The empty-string default is ValidAudioModels-only and excluded.
+func TestKnownConfigIDs_MatchesConfValidAudioModels(t *testing.T) {
+	t.Parallel()
+
+	known := KnownConfigIDs()
+	for id := range known {
+		assert.True(t, conf.ValidAudioModels[id],
+			"config ID %q is in classifier.KnownConfigIDs() but missing from conf.ValidAudioModels", id)
+	}
+	for id := range conf.ValidAudioModels {
+		if id == "" {
+			continue // ValidAudioModels-only sentinel for the default model
+		}
+		assert.True(t, known[id],
+			"config ID %q is in conf.ValidAudioModels but missing from classifier.KnownConfigIDs()", id)
+	}
+}
+
+func TestConfigAliasForRegistry_ReturnsCanonicalPrimary(t *testing.T) {
+	t.Parallel()
+
+	// The write-back alias must stay the canonical underscore form even though the
+	// hyphenated catalog ID is an accepted secondary alias, so ScanInstalled never
+	// rewrites models.enabled to the catalog-style spelling.
+	assert.Equal(t, "perch_v2", ConfigAliasForRegistry(RegistryIDPerchV2))
+	assert.Equal(t, "birdnet_v3.0", ConfigAliasForRegistry(RegistryIDBirdNETV3))
+	assert.Equal(t, "birdnet", ConfigAliasForRegistry("BirdNET_V2.4"))
+	assert.Equal(t, "bsg", ConfigAliasForRegistry(RegistryIDBSG))
 }
 
 func TestResolveConfigModelID_AllModels(t *testing.T) {
@@ -276,6 +394,10 @@ func TestResolveConfigModelID_AllModels(t *testing.T) {
 		{"bsg resolves", "bsg", RegistryIDBSG, true},
 		{"case insensitive bat", "BAT", RegistryIDBat, true},
 		{"case insensitive bsg", "BSG", RegistryIDBSG, true},
+		{"perch-v2 catalog id resolves", "perch-v2", RegistryIDPerchV2, true},
+		{"birdnet-v3.0 catalog id resolves", "birdnet-v3.0", RegistryIDBirdNETV3, true},
+		{"birdnet-v2.4 catalog id resolves", "birdnet-v2.4", "BirdNET_V2.4", true},
+		{"bsg-finland catalog id resolves", "bsg-finland", RegistryIDBSG, true},
 		{"unknown returns false", "nonexistent", "", false},
 	}
 
@@ -403,4 +525,62 @@ func TestModelInfo_ToDetectionModelInfo_EmptyDetectionName(t *testing.T) {
 	info := ModelInfo{ID: modelIDCustom, Name: "Custom"}
 	got := info.ToDetectionModelInfo()
 	assert.Equal(t, detection.DefaultModelInfo(), got)
+}
+
+// FuzzDetectQuantization seeds a few model names and asserts the result is
+// always one of the four defined Quantization constants and that the call
+// never panics.
+func FuzzDetectQuantization(f *testing.F) {
+	seeds := []string{
+		"BirdNET_INT8_ARM.onnx",
+		"model-fp16.tflite",
+		"BirdNET_GLOBAL_6K_V2.4_Model_FP32.tflite",
+		"sprint8_model.onnx",
+		"perch_point8.onnx",
+		"model_int8_fp16.onnx",
+		"model_FP16.TFLITE",
+		"int8_model.onnx",
+		"",
+		"/path/to/BirdNET_GLOBAL_6K_V2.4_Model_FP32.tflite",
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+	valid := map[Quantization]bool{
+		QuantizationUnknown: true,
+		QuantizationFP32:    true,
+		QuantizationFP16:    true,
+		QuantizationINT8:    true,
+	}
+	f.Fuzz(func(t *testing.T, name string) {
+		q := detectQuantization(name)
+		if !valid[q] {
+			t.Errorf("detectQuantization(%q) returned unexpected value %q", name, q)
+		}
+	})
+}
+
+func TestToDetectionModelInfoVariant(t *testing.T) {
+	t.Parallel()
+	t.Run("stock INT8 default attributes as default", func(t *testing.T) {
+		t.Parallel()
+		m := stockBirdNETV24ONNXVariant("/models/BirdNET_INT8_ARM.onnx", QuantizationINT8)
+		det := m.ToDetectionModelInfo()
+		assert.Equal(t, "default", det.Variant)
+		require.NotNil(t, det.ClassifierPath)
+		assert.Equal(t, "/models/BirdNET_INT8_ARM.onnx", *det.ClassifierPath)
+	})
+	t.Run("embedded FP32 default attributes as default", func(t *testing.T) {
+		t.Parallel()
+		m := ModelRegistry[DefaultModelVersion]
+		require.Empty(t, m.CustomPath, "precondition: registry entry must not have a custom path")
+		assert.Equal(t, "default", m.ToDetectionModelInfo().Variant)
+	})
+	t.Run("user/gallery model with path attributes as custom", func(t *testing.T) {
+		t.Parallel()
+		m := ModelRegistry[DefaultModelVersion]
+		m.CustomPath = "/home/user/my_birdnet.tflite"
+		m.IsStock = false
+		assert.Equal(t, "custom", m.ToDetectionModelInfo().Variant)
+	})
 }
